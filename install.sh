@@ -1,21 +1,39 @@
 #!/usr/bin/env bash
 # install.sh — reproducible environment setup for SD-GNN
-# Usage: bash install.sh [--cuda cu128|cu126|cu121|cpu]
+# Usage: bash install.sh [--cuda cu128|cu126|cu121|cpu] [--python python3.12]
 set -euo pipefail
 
 # ── Configuration ──────────────────────────────────────────────────────────────
-PYTHON="${PYTHON:-python3.11}"
+PYTHON="${PYTHON:-}"                   # auto-detected below if not set
 CUDA_TAG="${CUDA_TAG:-cu128}"          # override: bash install.sh --cuda cu121
 TORCH_VERSION="2.10.0"
 VENV_DIR="venvSD"
 
-# Parse optional --cuda flag
+# Parse optional flags
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --cuda) CUDA_TAG="$2"; shift 2 ;;
+        --cuda)   CUDA_TAG="$2";   shift 2 ;;
+        --python) PYTHON="$2";     shift 2 ;;
         *) echo "Unknown argument: $1"; exit 1 ;;
     esac
 done
+
+# Auto-detect Python 3.11 or 3.12 if not specified
+if [[ -z "$PYTHON" ]]; then
+    for candidate in python3.11 python3.12 python3; do
+        if command -v "$candidate" &>/dev/null; then
+            VERSION=$("$candidate" -c "import sys; print(sys.version_info[:2])")
+            if [[ "$VERSION" == "(3, 11)" || "$VERSION" == "(3, 12)" ]]; then
+                PYTHON="$candidate"
+                break
+            fi
+        fi
+    done
+    if [[ -z "$PYTHON" ]]; then
+        echo "ERROR: Python 3.11 or 3.12 not found. Install one or specify with --python."
+        exit 1
+    fi
+fi
 
 TORCH_INDEX="https://download.pytorch.org/whl/${CUDA_TAG}"
 
@@ -23,9 +41,11 @@ TORCH_INDEX="https://download.pytorch.org/whl/${CUDA_TAG}"
 echo "==> Checking prerequisites..."
 
 if ! command -v "$PYTHON" &>/dev/null; then
-    echo "ERROR: $PYTHON not found. Install Python 3.11 first."
+    echo "ERROR: $PYTHON not found. Install Python 3.11 or 3.12 first."
     exit 1
 fi
+DETECTED_VER=$("$PYTHON" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+echo "    Using $PYTHON ($DETECTED_VER)"
 
 if ! command -v g++ &>/dev/null; then
     echo "ERROR: g++ not found. Install build tools:"

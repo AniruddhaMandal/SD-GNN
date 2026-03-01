@@ -1,17 +1,17 @@
 # ── PyTorch ecosystem ──────────────────────────────────────────────────────────
 # torch itself is installed by install.sh (needs custom wheel index for CUDA)
-torch-geometric==2.7.0
+torch-geometric>=2.7.0
 # torch-scatter is built from source by install.sh (no pre-built wheels for torch 2.10)
 
 # ── Core scientific stack ──────────────────────────────────────────────────────
-numpy==2.4.2
-scipy==1.17.0
-scikit-learn==1.8.0
-networkx==3.6.1
+numpy>=2.0
+scipy>=1.13
+scikit-learn>=1.5
+networkx>=3.3
 
 # ── Experiment utilities ───────────────────────────────────────────────────────
-wandb==0.24.2
-tqdm==4.67.3
-pyyaml==6.0.3
-psutil==7.2.2
-gitpython==3.1.46
+wandb>=0.24
+tqdm>=4.62
+pyyaml>=6.0
+psutil>=6.0
+gitpython>=3.1

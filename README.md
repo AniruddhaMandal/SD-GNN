@@ -8,7 +8,7 @@ Graph neural network framework with subgraph sampling for graph, node, and link 
 
 | Requirement | Version |
 |---|---|
-| Python | 3.11 |
+| Python | 3.11 or 3.12 |
 | CUDA toolkit | 12.8 (or match your GPU driver) |
 | g++ | any modern version |
 
@@ -28,12 +28,14 @@ This script will:
 5. Compile the graphlet sampler extension (C++/CUDA)
 6. Install the `gxl` library in editable mode
 
-### Different CUDA versions
+### Options
 
 ```bash
-bash install.sh --cuda cu126   # CUDA 12.6
-bash install.sh --cuda cu121   # CUDA 12.1
-bash install.sh --cuda cpu     # CPU only
+bash install.sh --cuda cu126              # CUDA 12.6
+bash install.sh --cuda cu121              # CUDA 12.1
+bash install.sh --cuda cpu                # CPU only
+bash install.sh --python python3.12       # use Python 3.12
+bash install.sh --cuda cu126 --python python3.12  # combine flags
 ```
 
 ### Activate the environment
