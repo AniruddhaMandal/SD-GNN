@@ -25,7 +25,7 @@ This script will:
 2. Install PyTorch 2.10.0 (CUDA 12.8)
 3. Build `torch-scatter` from source
 4. Install all Python dependencies
-5. Compile the C++ sampler extensions (RWR, UGS, Uniform, Graphlet)
+5. Compile the graphlet sampler extension (C++/CUDA)
 6. Install the `gxl` library in editable mode
 
 ### Different CUDA versions
