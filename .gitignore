@@ -1,0 +1,9 @@
+data/
+experiments/
+venv**/
+.temp/
+.notes/
+.vscode/
+**.egg-info/
+__pycache__/
+build/
