@@ -44,10 +44,10 @@
   "device": "cuda",
   "seed": 42,
   "num_workers": 4,
-  "log_dir": "logs/SS-GNN",
+  "log_dir": "logs",
   "checkpoint_dir": "checkpoints",
   "save_every": 5,
   "keep_last_k": 3,
   "use_amp": false,
-  "grad_clip": 0.0
+  "sampler": "graphlet"
 }
