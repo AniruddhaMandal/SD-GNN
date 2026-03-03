@@ -83,9 +83,15 @@ class WeightedMeanAggregator(nn.Module):
         neg_log_p = -log_probs                                    # [B]
         neg_log_p = neg_log_p.masked_fill(~valid, float('-inf'))  # degenerate → -inf after negation
 
-        # Numerically stable per-graph softmax: subtract max per graph first
+        # Numerically stable per-graph softmax: subtract max per graph first.
+        # If ALL samples in a group are degenerate (log_p=-inf → neg_log_p=-inf),
+        # max_per_graph = -inf and -inf - (-inf) = NaN. Clamp to 0 so those
+        # groups get shifted=-inf → exp=0 → zero embedding instead of NaN.
         max_per_graph = scatter(neg_log_p, batch, dim=0,
                                 dim_size=num_graphs, reduce='max')  # [G]
+        max_per_graph = torch.where(torch.isfinite(max_per_graph),
+                                    max_per_graph,
+                                    torch.zeros_like(max_per_graph))
         shifted = neg_log_p - max_per_graph[batch]                  # [B]
         exp_shifted = torch.exp(shifted) * valid.float()            # [B]
 
