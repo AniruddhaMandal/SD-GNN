@@ -1,0 +1,43 @@
+{
+  "name": "Baseline: Tox21 VANILLA GCN",
+  "dataset_name": "Tox21",
+  "model_name": "VANILLA",
+  "task": "Multi-Lable-Binary-Classification",
+
+  "model_config": {
+    "name": "vanilla",
+    "mpnn_type": "gcn",
+    "node_feature_dim": 9,
+    "hidden_dim": 64,
+    "mpnn_layers": 4,
+    "dropout": 0.1,
+    "out_dim": 12,
+    "pooling": "mean"
+  },
+
+  "train": {
+    "epochs": 50,
+    "train_batch_size": 64,
+    "val_batch_size": 64,
+    "lr": 1e-3,
+    "weight_decay": 1e-5,
+    "optimizer": "adam",
+    "scheduler": {
+      "type": "reduce_on_plateau",
+      "patience": 20
+    },
+    "loss_fn": "BCEWithLogitsLoss",
+    "metric": "ROCAUC"
+  },
+
+  "device": "cuda",
+  "seed": 42,
+  "num_workers": 4,
+  "log_dir": "logs/phase1",
+  "checkpoint_dir": "checkpoints",
+  "save_every": 10,
+  "keep_last_k": 3,
+
+  "use_amp": false,
+  "grad_clip": 2.0
+}

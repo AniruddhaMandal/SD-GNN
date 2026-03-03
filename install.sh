@@ -84,7 +84,7 @@ pip install -r requirements.txt --quiet
 
 # ── C++ sampler extensions ────────────────────────────────────────────────────
 echo "==> Building graphlet sampler ..."
-pip install -e src/samplers/graphlet_sampler --quiet
+pip install -e src/samplers/graphlet_sampler --no-build-isolation --quiet
 
 # ── GXL (main library) ────────────────────────────────────────────────────────
 echo "==> Installing GXL (editable) ..."

@@ -1,0 +1,45 @@
+{
+  "name": "Baseline: COLLAB VANILLA GCN",
+  "dataset_name": "COLLAB",
+  "model_name": "VANILLA",
+  "task": "Multi-Class-Classification",
+
+  "model_config": {
+    "name": "vanilla",
+    "mpnn_type": "gcn",
+    "node_feature_type": "degree_embed",
+    "max_degree": 500,
+    "node_feature_dim": 64,
+    "hidden_dim": 256,                          
+    "mpnn_layers": 5,                           
+    "dropout": 0.3,                             
+    "out_dim": 3,
+    "pooling": "add"                              
+  },
+
+  "train": {
+    "epochs": 50,                              
+    "train_batch_size": 128,                     
+    "val_batch_size": 64,
+    "lr": 1e-3,
+    "weight_decay": 5e-4,                       
+    "optimizer": "adam",
+    "scheduler": {
+      "type": "reduce_on_plateau",
+      "patience": 10                            
+    },
+    "loss_fn": "CrossEntropyLoss",
+    "metric": "ACC"                             
+  },
+
+  "device": "cuda",
+  "seed": 42,
+  "num_workers": 4,
+  "log_dir": "logs",
+  "checkpoint_dir": "checkpoints",
+  "save_every": 1,
+  "keep_last_k": 3,
+
+  "use_amp": true,                               
+  "grad_clip": 2.0
+}

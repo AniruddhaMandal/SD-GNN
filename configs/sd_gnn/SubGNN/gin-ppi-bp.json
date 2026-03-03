@@ -1,0 +1,53 @@
+{
+  "name": "SD-GNN: PPI-BP GIN (k=5, m=100)",
+  "dataset_name": "PPI-BP",
+  "model_name": "SD-GNN",
+  "task": "Multi-Class-Classification",
+  "model_config": {
+    "mpnn_type": "gin",
+    "node_feature_dim": 1,
+    "hidden_dim": 64,
+    "mpnn_layers": 4,
+    "dropout": 0.1,
+    "out_dim": 6,
+    "pooling": "mean",
+    "temperature": 0.5,
+    "subgraph_sampling": true,
+    "subgraph_param": {
+      "k": 5,
+      "m": 6,
+      "pooling": "mean"
+    },
+    "kwargs": {
+      "node_feature_type": "all_one",
+      "aggregator": "mean",
+      "sub_num_layers": 3,
+      "val_ema_alpha": 0.85
+    }
+  },
+  "train": {
+    "epochs": 100,
+    "train_batch_size": 32,
+    "val_batch_size": 32,
+    "lr": 0.001,
+    "weight_decay": 1e-05,
+    "optimizer": "adam",
+    "scheduler": {
+      "type": "reduce_on_plateau",
+      "patience": 20
+    },
+    "loss_fn": "CrossEntropyLoss",
+    "metric": "ACC",
+    "grad_clip": 1.0
+  },
+  "device": "cuda",
+  "seed": 42,
+  "num_workers": 4,
+  "log_dir": "logs",
+  "checkpoint_dir": "checkpoints",
+  "save_every": 1,
+  "keep_last_k": 3,
+  "use_amp": false,
+  "grad_clip": 2.0,
+  "sampler": "epsilon_uniform"
+}

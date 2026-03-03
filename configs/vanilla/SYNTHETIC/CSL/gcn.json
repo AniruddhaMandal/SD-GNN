@@ -1,0 +1,36 @@
+{
+  "name": "CSL: VANILLA GCN",
+  "dataset_name": "CSL",
+  "model_name": "VANILLA",
+  "task": "Multi-Class-Classification",
+  "model_config": {
+    "name": "vanilla",
+    "mpnn_type": "gcn",
+    "node_feature_dim": 1,
+    "hidden_dim": 64,
+    "mpnn_layers": 4,
+    "dropout": 0.0,
+    "out_dim": 10,
+    "pooling": "add",
+    "kwargs": {"node_feature_type": "all_one"}
+  },
+  "train": {
+    "epochs": 200,
+    "train_batch_size": 16,
+    "val_batch_size": 16,
+    "train_ratio": 0.6,
+    "val_ratio": 0.2,
+    "lr": 1e-3,
+    "weight_decay": 0.0,
+    "optimizer": "adam",
+    "scheduler": {"type": "reduce_on_plateau", "patience": 20},
+    "loss_fn": "CrossEntropyLoss",
+    "metric": "ACC"
+  },
+  "device": "cuda",
+  "seed": 42,
+  "num_workers": 0,
+  "log_dir": "logs",
+  "checkpoint_dir": "checkpoints/vanilla-csl/",
+  "use_amp": false
+}

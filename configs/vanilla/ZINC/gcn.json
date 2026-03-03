@@ -1,0 +1,47 @@
+{
+  "name": "Baseline: ZINC VANILLA GCN",
+  "dataset_name": "ZINC",
+  "model_name": "VANILLA",
+  "task": "Regression",
+
+  "model_config": 
+  {
+    "name": "vanilla",
+    "mpnn_type": "gcn",
+    "node_feature_dim": 28,         
+    "edge_feature_dim": 4,          
+    "hidden_dim": 64,               
+    "mpnn_layers": 4,
+    "dropout": 0.0,
+    "out_dim": 1,
+    "pooling": "sum"
+  },
+
+  "train": {
+    "epochs": 300,
+    "train_batch_size": 128,
+    "val_batch_size": 128,
+    "lr": 0.001,
+    "weight_decay": 0.0,
+    "optimizer": "adam",
+    "scheduler": {
+      "type": "reduce_on_plateau",
+      "patience": 20,
+      "factor": 0.5
+    },
+    "loss_fn": "L1Loss",
+    "metric": "MAE"
+  },
+
+  "device": "cuda",
+  "seed": 42,
+  "num_workers": 4,
+
+  "log_dir": "logs",
+  "checkpoint_dir": "checkpoints",
+
+  "save_every": 5,
+  "keep_last_k": 3,
+  "use_amp": false,
+  "grad_clip": 0.0
+}

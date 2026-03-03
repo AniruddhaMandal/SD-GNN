@@ -1,0 +1,33 @@
+{
+    "name": "VANILLA: Questions GCN",
+    "task": "Node-Classification",
+    "dataset_name": "Questions",
+    "model_name": "VANILLA",
+    "model_config": {
+        "mpnn_type": "gcn",
+        "node_feature_dim": 301,
+        "hidden_dim": 64,
+        "out_dim": 2,
+        "mpnn_layers": 3,
+        "dropout": 0.5,
+        "pooling": "off",
+        "kwargs": {
+            "residual": false
+        }
+    },
+    "train": {
+        "epochs": 200,
+        "train_batch_size": 1,
+        "val_batch_size": 1,
+        "lr": 0.01,
+        "weight_decay": 0.0005,
+        "optimizer": "adam",
+        "loss_fn": "CrossEntropyLoss",
+        "metric": "ACC",
+        "train_ratio": 0.6,
+        "val_ratio": 0.2
+    },
+    "device": "cuda",
+    "seed": 42,
+    "num_workers": 0,
+}

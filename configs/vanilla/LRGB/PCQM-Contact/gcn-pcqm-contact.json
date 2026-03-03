@@ -1,0 +1,48 @@
+{
+    "name":"Baseline: PCQM-Contact VANILLA GCN",
+    "dataset_name": "PCQM-Contact",
+    "model_name": "VANILLA",
+    "task": "Link-Prediction",
+
+    "model_config": 
+    {
+        "name": "vanilla",
+        "mpnn_type": "gcn",
+        "node_feature_dim": 9,
+        "hidden_dim": 300,
+        "mpnn_layers": 5,
+        "dropout": 0.1,
+        "out_dim": 10,
+        "pooling": "off",
+        "kwargs":{
+            "head_score_fn": "dot"
+        }
+    },
+
+    "train": 
+    {
+        "epochs": 50,
+        "train_batch_size": 256,
+        "val_batch_size": 128,
+        "lr": 1e-3,
+        "weight_decay": 1e-5,
+        "optimizer": "adam",  
+        "scheduler": {
+            "type":"reduce_on_plateau",
+            "patience":20
+        },
+        "loss_fn": "BCEWithLogitsLoss",
+        "metric": "MRR"
+    },
+
+    "device":"cuda",
+    "seed": 42,
+    "num_workers": 6,
+    "log_dir": "logs",
+    "checkpoint_dir": "checkpoints",
+    "save_every": 1,
+    "keep_last_k": 3,
+
+    "use_amp": false,
+    "grad_clip": 2.0
+}
