@@ -12,21 +12,20 @@
     "dropout": 0.0,
     "out_dim": 1,
     "pooling": "mean",
-    "temperature": 0.5,
     "subgraph_sampling": true,
     "subgraph_param": {
-      "k": 8,
-      "m": 6,
+      "k": 7,
+      "m": 20,
       "pooling": "sum"
     },
     "kwargs": {
-      "aggregator": "attention",
+      "aggregator": "mean",
       "sub_num_layers": 3,
       "val_ema_alpha": 0.85
     }
   },
   "train": {
-    "epochs": 150,
+    "epochs": 200,
     "train_batch_size": 128,
     "val_batch_size": 128,
     "lr": 0.001,
