@@ -10,9 +10,9 @@ from torch_geometric.nn import (
 )
 from torch_geometric.nn.norm import BatchNorm
 from torch_geometric.utils import scatter
-from gxl import SubgraphFeaturesBatch
+from gxl import SubgraphFeaturesBatch, ExperimentConfig
 from gxl import aggregator
-from gxl.registry import get_aggregator
+from gxl.registry import get_aggregator, register_model
 
 
 def make_mlp(in_dim, hidden_dim, out_dim, num_layers=2, activate_last=False):
@@ -435,3 +435,32 @@ class SSGNNNodeEncoder(nn.Module, _SubgraphEncodeMixin):
 # Backward-compatible alias
 # ---------------------------------------------------------------------------
 SubgraphSamplingGNNClassifier = SSGNNGraphEncoder
+
+
+@register_model('SS-GNN')
+def build_ssgnn(cfg: ExperimentConfig):
+    is_node_level = cfg.task in ('Node-Classification', 'Link-Prediction')
+    if is_node_level:
+        return SSGNNNodeEncoder(
+            in_channels=cfg.model_config.node_feature_dim,
+            edge_dim=cfg.model_config.edge_feature_dim,
+            hidden_dim=cfg.model_config.hidden_dim,
+            num_layers=cfg.model_config.mpnn_layers,
+            dropout=cfg.model_config.dropout,
+            conv_type=cfg.model_config.mpnn_type,
+            aggregator=cfg.model_config.pooling,
+            temperature=cfg.model_config.temperature,
+            pooling=cfg.model_config.subgraph_param.pooling,
+        )
+    else:
+        return SSGNNGraphEncoder(
+            in_channels=cfg.model_config.node_feature_dim,
+            edge_dim=cfg.model_config.edge_feature_dim,
+            hidden_dim=cfg.model_config.hidden_dim,
+            num_layers=cfg.model_config.mpnn_layers,
+            dropout=cfg.model_config.dropout,
+            conv_type=cfg.model_config.mpnn_type,
+            aggregator=cfg.model_config.pooling,
+            temperature=cfg.model_config.temperature,
+            pooling=cfg.model_config.subgraph_param.pooling,
+        )

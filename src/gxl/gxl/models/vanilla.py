@@ -2,11 +2,12 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import (
-    GINEConv, GINConv, GCNConv, SAGEConv, GATv2Conv, SGConv, GCN2Conv, PNAConv, 
+    GINEConv, GINConv, GCNConv, SAGEConv, GATv2Conv, SGConv, GCN2Conv, PNAConv,
     global_mean_pool, global_add_pool, global_max_pool
 )
 from torch_geometric.nn.norm import BatchNorm
-from gxl import SubgraphFeaturesBatch
+from gxl import SubgraphFeaturesBatch, ExperimentConfig
+from gxl.registry import register_model
 
 
 def make_mlp(in_dim, hidden_dim, out_dim, num_layers=2, activate_last=False):
@@ -186,3 +187,26 @@ class VanillaGNNClassifier(nn.Module):
         
         g = self.pooling_fn(h, batch.batch)
         return g
+
+
+@register_model('VANILLA')
+def build_vanilla(cfg: ExperimentConfig):
+    pooling = 'off' if cfg.task == 'Node-Classification' else cfg.model_config.pooling
+    residual = cfg.model_config.kwargs.get('residual', True)
+    jk_mode = cfg.model_config.kwargs.get('jk_mode', 'cat')
+    gcnii_alpha = cfg.model_config.kwargs.get('gcnii_alpha', 0.1)
+    gcnii_theta = cfg.model_config.kwargs.get('gcnii_theta', 0.5)
+    return VanillaGNNClassifier(
+        in_channels=cfg.model_config.node_feature_dim,
+        edge_dim=cfg.model_config.edge_feature_dim,
+        hidden_dim=cfg.model_config.hidden_dim,
+        out_dim=cfg.model_config.hidden_dim,
+        num_layers=cfg.model_config.mpnn_layers,
+        dropout=cfg.model_config.dropout,
+        conv_type=cfg.model_config.mpnn_type,
+        pooling=pooling,
+        residual=residual,
+        gcnii_alpha=gcnii_alpha,
+        gcnii_theta=gcnii_theta,
+        jk_mode=jk_mode,
+    )

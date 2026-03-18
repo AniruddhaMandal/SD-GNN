@@ -2,8 +2,8 @@ import torch
 import torch.nn as nn
 from torch_geometric.nn import global_mean_pool, global_add_pool, global_max_pool
 
-from gxl import SubgraphFeaturesBatch
-from gxl.registry import get_aggregator
+from gxl import SubgraphFeaturesBatch, ExperimentConfig
+from gxl.registry import get_aggregator, register_model
 from gxl.models.ss_gnn import SubgraphGNNEncoder, _SubgraphEncodeMixin
 
 
@@ -127,3 +127,22 @@ class SDGNNEncoder(nn.Module, _SubgraphEncodeMixin):
             batch=batch.batch,
             edge_attr=batch.edge_attr,
         )
+
+
+@register_model('SD-GNN')
+def build_sdgnn(cfg: ExperimentConfig):
+    kw = cfg.model_config.kwargs
+    return SDGNNEncoder(
+        in_channels=cfg.model_config.node_feature_dim,
+        edge_dim=cfg.model_config.edge_feature_dim,
+        hidden_dim=cfg.model_config.hidden_dim,
+        num_layers=cfg.model_config.mpnn_layers,
+        dropout=cfg.model_config.dropout,
+        conv_type=cfg.model_config.mpnn_type,
+        pooling=cfg.model_config.pooling,
+        sub_pooling=cfg.model_config.subgraph_param.pooling,
+        aggregator=kw.get('aggregator', 'mean'),
+        temperature=cfg.model_config.temperature or 0.5,
+        sub_num_layers=kw.get('sub_num_layers', None),
+        sub_conv_type=kw.get('sub_conv_type', None),
+    )

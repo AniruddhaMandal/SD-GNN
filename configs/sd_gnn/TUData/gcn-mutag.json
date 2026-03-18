@@ -48,5 +48,5 @@
   "keep_last_k": 3,
   "use_amp": false,
   "grad_clip": 2.0,
-  "sampler": "uniform"
+  "sampler": "graphlet"
 }

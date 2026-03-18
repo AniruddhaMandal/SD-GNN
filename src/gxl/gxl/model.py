@@ -2,82 +2,14 @@ import torch.nn as nn
 from gxl.models.head import ClassifierHead, LinkPredictorHead
 from gxl.models.amplified_head import build_amplified_head
 from gxl.registry import get_model
-from .registry import register_model
 from . import ExperimentConfig
 from . import SubgraphFeaturesBatch
 
-@register_model('VANILLA')
-def VANILLA(cfg: ExperimentConfig):
-    from gxl.models.vanilla import VanillaGNNClassifier
-    # For node-level tasks, skip global pooling
-    pooling = 'off' if cfg.task == 'Node-Classification' else cfg.model_config.pooling
-    residual = cfg.model_config.kwargs.get('residual', True)
-    jk_mode = cfg.model_config.kwargs.get('jk_mode', 'cat')
-    gcnii_alpha = cfg.model_config.kwargs.get('gcnii_alpha', 0.1)
-    gcnii_theta = cfg.model_config.kwargs.get('gcnii_theta', 0.5)
-    model = VanillaGNNClassifier(in_channels=cfg.model_config.node_feature_dim,
-                            edge_dim= cfg.model_config.edge_feature_dim,
-                            hidden_dim=cfg.model_config.hidden_dim,
-                            out_dim=cfg.model_config.hidden_dim,
-                            num_layers=cfg.model_config.mpnn_layers,
-                            dropout=cfg.model_config.dropout,
-                            conv_type=cfg.model_config.mpnn_type,
-                            pooling=pooling,
-                            residual=residual,
-                            gcnii_alpha=gcnii_alpha,
-                            gcnii_theta=gcnii_theta,
-                            jk_mode=jk_mode)
-    return model
+# Import model modules to trigger their @register_model decorators
+import gxl.models.vanilla  # noqa: F401
+import gxl.models.ss_gnn   # noqa: F401
+import gxl.models.sd_gnn   # noqa: F401
 
-@register_model('SS-GNN')
-def SSGNN(cfg: ExperimentConfig):
-    from gxl.models.ss_gnn import SSGNNGraphEncoder, SSGNNNodeEncoder
-
-    is_node_level = cfg.task in ('Node-Classification', 'Link-Prediction')
-
-    if is_node_level:
-        model = SSGNNNodeEncoder(
-            in_channels=cfg.model_config.node_feature_dim,
-            edge_dim=cfg.model_config.edge_feature_dim,
-            hidden_dim=cfg.model_config.hidden_dim,
-            num_layers=cfg.model_config.mpnn_layers,
-            dropout=cfg.model_config.dropout,
-            conv_type=cfg.model_config.mpnn_type,
-            aggregator=cfg.model_config.pooling,
-            temperature=cfg.model_config.temperature,
-            pooling=cfg.model_config.subgraph_param.pooling)
-    else:
-        model = SSGNNGraphEncoder(
-            in_channels=cfg.model_config.node_feature_dim,
-            edge_dim=cfg.model_config.edge_feature_dim,
-            hidden_dim=cfg.model_config.hidden_dim,
-            num_layers=cfg.model_config.mpnn_layers,
-            dropout=cfg.model_config.dropout,
-            conv_type=cfg.model_config.mpnn_type,
-            aggregator=cfg.model_config.pooling,
-            temperature=cfg.model_config.temperature,
-            pooling=cfg.model_config.subgraph_param.pooling)
-
-    return model
-
-@register_model('SD-GNN')
-def SDGNN(cfg: ExperimentConfig):
-    from gxl.models.sd_gnn import SDGNNEncoder
-    kw = cfg.model_config.kwargs
-    return SDGNNEncoder(
-        in_channels   = cfg.model_config.node_feature_dim,
-        edge_dim      = cfg.model_config.edge_feature_dim,
-        hidden_dim    = cfg.model_config.hidden_dim,
-        num_layers    = cfg.model_config.mpnn_layers,
-        dropout       = cfg.model_config.dropout,
-        conv_type     = cfg.model_config.mpnn_type,
-        pooling       = cfg.model_config.pooling,
-        sub_pooling   = cfg.model_config.subgraph_param.pooling,
-        aggregator    = kw.get('aggregator', 'mean'),
-        temperature   = cfg.model_config.temperature or 0.5,
-        sub_num_layers= kw.get('sub_num_layers', None),
-        sub_conv_type = kw.get('sub_conv_type', None),
-    )
 
 class ExperimentModel(nn.Module):
     def __init__(self,
