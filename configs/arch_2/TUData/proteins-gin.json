@@ -1,0 +1,44 @@
+{
+  "dataset_name": "PROTEINS",
+  "model_name": "ARCH-2",
+  "task": "Binary-Classification",
+
+  "model_config": {
+    "mpnn_type": "gin",
+    "node_feature_dim": 3,
+    "hidden_dim": 64,
+    "mpnn_layers": 4,
+    "dropout": 0.2,
+    "out_dim": 2,
+    "pooling": "mean",
+    "temperature": 0.5,
+    "subgraph_sampling": true,
+    "subgraph_param": { "k": 5, "m": 6, "pooling": "mean" },
+    "kwargs": { "aggregator": "mean", "residual": true }
+  },
+
+  "train": {
+    "epochs": 150,
+    "train_batch_size": 32,
+    "val_batch_size": 32,
+    "train_ratio": 0.7,
+    "val_ratio": 0.15,
+    "lr": 1e-3,
+    "weight_decay": 5e-4,
+    "optimizer": "adam",
+    "scheduler": {
+      "type": "reduce_on_plateau",
+      "patience": 20
+    },
+    "loss_fn": "CrossEntropyLoss",
+    "metric": "ACC",
+    "grad_clip": 1.0
+  },
+
+  "device": "cuda",
+  "seed": 42,
+  "num_workers": 4,
+  "save_every": 1,
+  "keep_last_k": 3,
+  "sampler": "graphlet"
+}
