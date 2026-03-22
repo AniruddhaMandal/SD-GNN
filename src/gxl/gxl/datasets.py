@@ -151,19 +151,22 @@ def build_tudata(cfg: ExperimentConfig):
     dataset = TUDataset(root="data/TUDataset",name=cfg.dataset_name,transform=transforms)
     needs_x = (getattr(dataset[0],'x', None) is None) or (dataset.num_node_features == 0)
     if needs_x:
-        assert hasattr(cfg.model_config, 'node_feature_type') # for data with no feature type requires `node_feature_type`
-        assert hasattr(cfg.model_config, 'max_degree') # and `max_degree`
-        max_degree = cfg.model_config.max_degree
-        if cfg.model_config.node_feature_type == "one_hot_degree":
+        f_type = cfg.model_config.kwargs.get('node_feature_type')
+        max_degree = cfg.model_config.kwargs.get('max_degree')
+        assert f_type is not None, \
+            "Dataset has no node features — set `node_feature_type` in model_config.kwargs."
+        assert max_degree is not None, \
+            "Dataset has no node features — set `max_degree` in model_config.kwargs."
+        if f_type == "one_hot_degree":
             transforms = Compose([ToUndirected(),ClipOneHotDegree(max_degree=max_degree,
                                                                   cat=False)])
-        elif cfg.model_config.node_feature_type == "degree_embed":
+        elif f_type == "degree_embed":
             node_dim = cfg.model_config.node_feature_dim
             transforms = Compose([ToUndirected(),ClipDegreeEmbed(max_degree=max_degree,
                                                                  embed_dim=node_dim,
                                                                  cat=False)])
         else:
-            raise ValueError(f"Unknown `node_feature_type`({cfg.model_config.node_feature_type})")
+            raise ValueError(f"Unknown `node_feature_type`({f_type})")
         dataset = TUDataset(root="data/TUDataset",name=cfg.dataset_name,transform=transforms)
 
     return build_dataloaders_from_dataset(dataset, cfg)

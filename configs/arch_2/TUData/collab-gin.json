@@ -1,20 +1,20 @@
 {
-  "dataset_name": "PROTEINS",
+  "dataset_name": "COLLAB",
   "model_name": "ARCH-2-V2",
-  "task": "Binary-Classification",
+  "task": "Multi-Class-Classification",
 
   "model_config": {
     "mpnn_type": "gin",
-    "node_feature_dim": 3,
+    "node_feature_dim": 64,
     "hidden_dim": 64,
     "mpnn_layers": 4,
     "dropout": 0.2,
-    "out_dim": 2,
+    "out_dim": 3,
     "pooling": "mean",
     "temperature": 0.5,
     "subgraph_sampling": true,
-    "subgraph_param": { "k": 5, "m": 6, "pooling": "mean" },
-    "kwargs": { "aggregator": "mean", "residual": true , "val_ema_alpha": 0.85 }
+    "subgraph_param": { "k": 6, "m": 6, "pooling": "mean" },
+    "kwargs": { "aggregator": "mean", "residual": true, "node_feature_type": "degree_embed", "max_degree": 500 }
   },
 
   "train": {

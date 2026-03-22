@@ -7,14 +7,13 @@
   "model_config": {
     "name": "vanilla",
     "mpnn_type": "gcn",
-    "node_feature_type": "degree_embed",
-    "max_degree": 500,
     "node_feature_dim": 64,
     "hidden_dim": 256,                          
     "mpnn_layers": 5,                           
     "dropout": 0.3,                             
     "out_dim": 3,
-    "pooling": "add"                              
+    "pooling": "add",
+    "kwargs": { "node_feature_type": "degree_embed", "max_degree": 500 }
   },
 
   "train": {
