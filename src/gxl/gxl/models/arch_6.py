@@ -128,8 +128,8 @@ class LocalSubgraphTransformer(nn.Module):
     """
     Transformer on k tokens of each gSWARD graphlet.
 
-    Input:  h [S*k, H], valid [S*k] bool, root_local [S]
-    Output: root_embs [S, H]
+    Input:  h [S*k, H], valid [S*k] bool
+    Output: sub_embs [S, H]  (mean-pool of valid tokens per subgraph)
 
     Edge features add a per-head additive attention bias (Graphormer-style).
     Padded tokens masked via src_key_padding_mask.
@@ -166,7 +166,6 @@ class LocalSubgraphTransformer(nn.Module):
         self,
         h:                  torch.Tensor,   # [S*k, H]
         valid:              torch.Tensor,   # [S*k] bool
-        root_local:         torch.Tensor,   # [S]
         edge_index_sampled: torch.Tensor,   # [2, E_sub] LOCAL coords (0..k-1)
         ea_flat:            torch.Tensor,   # [E_sub, edge_dim] or None
         edge_ptr:           torch.Tensor,   # [S+1]
@@ -196,8 +195,12 @@ class LocalSubgraphTransformer(nn.Module):
         )   # [S, k, H]
         out = self.norm(out)
 
-        root_embs = out[torch.arange(S, device=device), root_local]   # [S, H]
-        return root_embs
+        # Mean-pool over ALL valid tokens (matching GPM's mean(dim=1) extraction).
+        # Masking padded positions to zero before summing avoids polluting the mean.
+        valid_3d  = valid.view(S, k).float().unsqueeze(-1)          # [S, k, 1]
+        valid_sum = valid_3d.sum(dim=1).clamp(min=1.0)              # [S, 1]
+        sub_embs  = (out * valid_3d).sum(dim=1) / valid_sum         # [S, H]
+        return sub_embs
 
 
 # ---------------------------------------------------------------------------
@@ -290,8 +293,8 @@ def _gpm_encode(
 
     Steps:
       1. Flatten subgraphs, build initial node embeddings [S*k, H]
-      2. Local transformer on each graphlet → root_embs [S, H]
-      3. weighted_mean aggregation per node → node_embs [N, H]
+      2. Local transformer on each graphlet → sub_embs [S, H] (mean-pool)
+      3. mean aggregation per node → node_embs [N, H]
     """
     device = sf.x.device
     S, k   = sf.nodes_sampled.shape
@@ -302,8 +305,10 @@ def _gpm_encode(
     x_flat, ea_flat, intra_ei, sub_batch, node_ids, valid, N_total = \
         _flatten_subgraphs(sf)
 
-    # Root positions (in local coords, 0..k-1)
-    target_batch  = torch.arange(T, device=device).repeat_interleave(m)
+    # Target-to-subgraph mapping: subgraph s belongs to target node target_batch[s]
+    target_batch = torch.arange(T, device=device).repeat_interleave(m)
+
+    # Root positions (in local coords, 0..k-1) — used as root indicator in init
     root_global   = sf.target_nodes[target_batch]
     matches       = (sf.nodes_sampled == root_global.unsqueeze(1))
     root_local    = matches.long().argmax(dim=1)                     # [S]
@@ -323,20 +328,20 @@ def _gpm_encode(
     # Initial embeddings [S*k, H]
     h = initializer(x_flat, lp_flat, root_mask)
 
-    # Phase 1: Local Transformer
+    # Phase 1: Local Transformer — mean-pool over all valid tokens → [S, H]
     # Pass sf.edge_index_sampled (local 0..k-1 coords), not intra_ei (global S*k coords)
-    root_embs = local_transformer(
-        h, valid, root_local,
+    sub_embs = local_transformer(
+        h, valid,
         sf.edge_index_sampled, ea_flat, sf.edge_ptr,
         S, k,
     )   # [S, H]
 
-    # Aggregation: m root_embs → node_embs [T=N_total, H]
+    # Aggregation: m sub_embs → node_embs [T=N_total, H]
     log_probs = sf.log_probs
     if getattr(aggregator, 'needs_log_probs', False):
-        node_embs = aggregator(root_embs, target_batch, log_probs=log_probs)
+        node_embs = aggregator(sub_embs, target_batch, log_probs=log_probs)
     else:
-        node_embs = aggregator(root_embs, target_batch)
+        node_embs = aggregator(sub_embs, target_batch)
 
     return node_embs   # [T, H]
 

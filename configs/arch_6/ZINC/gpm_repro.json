@@ -9,7 +9,7 @@
     "edge_feature_dim": 4,
     "hidden_dim": 128,
     "mpnn_layers": 8,
-    "dropout": 0.0,
+    "dropout": 0.1,
     "out_dim": 1,
     "pooling": "sum",
     "temperature": 0.5,
@@ -20,17 +20,18 @@
       "global_layers": 4,
       "num_heads": 8,
       "ffn_dim": 256,
-      "aggregator": "weighted_mean",
-      "use_edge_bias": true
+      "aggregator": "mean",
+      "use_edge_bias": true,
+      "init_mode": "add"
     }
   },
 
   "train": {
     "epochs": 500,
-    "train_batch_size": 32,
+    "train_batch_size": 1024,
     "val_batch_size": 64,
-    "lr": 2e-4,
-    "weight_decay": 1e-5,
+    "lr": 1e-3,
+    "weight_decay": 0.0,
     "optimizer": "adam",
     "scheduler": {
       "type": "reduce_on_plateau",
