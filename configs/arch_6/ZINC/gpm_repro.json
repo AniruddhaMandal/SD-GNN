@@ -28,7 +28,7 @@
 
   "train": {
     "epochs": 500,
-    "train_batch_size": 1024,
+    "train_batch_size": 32,
     "val_batch_size": 64,
     "lr": 1e-3,
     "weight_decay": 0.0,
