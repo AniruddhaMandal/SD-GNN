@@ -162,7 +162,6 @@ class VanillaGNNClassifier(nn.Module):
                 h = conv(h, edge_index, e)
             else:
                 h = conv(h, edge_index)
-            h = conv(h, edge_index) if not self.use_edges else conv(h, edge_index, e)
             h = bn(h)
             h = F.relu(h)
             if self.residual:

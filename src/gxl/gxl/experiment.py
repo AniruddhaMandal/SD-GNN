@@ -488,7 +488,8 @@ class Experiment:
             if self.scheduler is not None and not isinstance(self.scheduler, optim.lr_scheduler.ReduceLROnPlateau):
                 self.scheduler.step()
             if isinstance(self.scheduler, optim.lr_scheduler.ReduceLROnPlateau):
-                self.scheduler.step(val_stats.get('loss'))
+                metric_for_sched = val_stats.get('metric')
+                self.scheduler.step(metric_for_sched if metric_for_sched is not None else val_stats.get('loss'))
 
             # save checkpoint
             if epoch % self.cfg.save_every == 0:
