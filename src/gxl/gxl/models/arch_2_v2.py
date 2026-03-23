@@ -161,6 +161,7 @@ class SubgraphGNNLayer(nn.Module):
         self.dropout     = dropout
         self.residual    = residual
         self.use_ea      = (conv_type == 'gine')
+        self.edge_dim    = edge_dim   # needed by GINEConv for its internal edge projection
 
         # MP-1: intra-subgraph GNN
         self.in_subgraph_mp = self._make_conv(in_channels, out_channels, mlp_layers)
@@ -220,7 +221,11 @@ class SubgraphGNNLayer(nn.Module):
 
     def _make_conv(self, in_dim, out_dim, mlp_layers):
         if self.conv_type == 'gine':
-            return GINEConv(nn=make_mlp(in_dim, in_dim, out_dim, mlp_layers), train_eps=True)
+            # edge_dim tells GINEConv to project ea_flat (edge_feature_dim) → in_dim
+            # internally before adding to neighbor features. Without this, GINEConv
+            # requires edge_attr.size(-1) == in_dim which fails for ZINC (4 vs 64).
+            return GINEConv(nn=make_mlp(in_dim, in_dim, out_dim, mlp_layers),
+                            train_eps=True, edge_dim=self.edge_dim)
         if self.conv_type == 'gin':
             return GINConv(nn=make_mlp(in_dim, in_dim, out_dim, mlp_layers), train_eps=True)
         if self.conv_type == 'gcn':
@@ -356,14 +361,9 @@ class _SSGNNBaseEncoder(nn.Module):
             residual    = residual,
             init_mode   = init_mode,
         )
-        if sub_pooling == 'mean':
-            self.sub_pool_fn = global_mean_pool
-        elif sub_pooling in ('add', 'sum'):
-            self.sub_pool_fn = global_add_pool
-        elif sub_pooling == 'max':
-            self.sub_pool_fn = global_max_pool
-        else:
+        if sub_pooling not in ('mean', 'sum', 'add', 'max'):
             raise ValueError(f"Unknown sub_pooling: {sub_pooling}")
+        self.sub_pooling = sub_pooling
 
 
 # ---------------------------------------------------------------------------
@@ -412,12 +412,21 @@ class SSGNNGraphEncoder(_SSGNNBaseEncoder):
         h, node_ids, valid, sub_batch, N_total = self.encoder(sf)  # [S*k, H]
 
         # Subgraph pool: [S*k, H] → [S, H]
-        # Bug 3 fix: global_mean_pool divides by k (all positions including padded).
-        # Use add+count to divide only by the number of valid positions per subgraph.
+        # h is already zero at padded positions (enforced by SubgraphGNNLayer).
+        # Dispatch on configured pooling mode; each branch counts only valid positions.
         valid_f = valid.float().unsqueeze(-1)
-        sub_sum   = global_add_pool(h * valid_f, sub_batch)         # [S, H]
-        sub_count = global_add_pool(valid_f, sub_batch).clamp(min=1) # [S, 1]
-        sub_emb   = sub_sum / sub_count                              # [S, H]
+        if self.sub_pooling in ('sum', 'add'):
+            # Sum only valid node embeddings within each subgraph.
+            sub_emb = global_add_pool(h * valid_f, sub_batch)              # [S, H]
+        elif self.sub_pooling == 'max':
+            # Set padded positions to -inf so they never win the max.
+            h_masked = h.masked_fill(~valid.unsqueeze(-1), float('-inf'))
+            sub_emb  = global_max_pool(h_masked, sub_batch)                # [S, H]
+        else:  # 'mean'
+            # Divide by valid count, not total k, to exclude padded positions.
+            sub_sum   = global_add_pool(h * valid_f, sub_batch)            # [S, H]
+            sub_count = global_add_pool(valid_f, sub_batch).clamp(min=1)   # [S, 1]
+            sub_emb   = sub_sum / sub_count                                 # [S, H]
 
         # Graph pool: [S, H] → [G, H]
         sample_ptr      = sf.sample_ptr                       # [G+1]
@@ -469,12 +478,17 @@ class SSGNNNodeEncoder(_SSGNNBaseEncoder):
     def forward(self, sf: SubgraphFeaturesBatch):
         h, node_ids, valid, sub_batch, N_total = self.encoder(sf)  # [S*k, H]
 
-        valid_f   = valid.float().unsqueeze(-1)
-        node_emb  = scatter(
-            h * valid_f,
-            node_ids.clamp(min=0), dim=0,
-            dim_size=N_total, reduce='mean'
-        )                                                           # [N_total, H]
+        # Aggregate each global node's embedding across all subgraphs it appears in.
+        # Padded positions have node_ids=-1, clamped to 0 → would pollute node 0's mean.
+        # Use sum/count so padded contributions (h=0, valid=0) are excluded from denominator.
+        valid_f  = valid.float().unsqueeze(-1)
+        clamped  = node_ids.clamp(min=0)
+        h_sum    = scatter(h * valid_f, clamped, dim=0,
+                           dim_size=N_total, reduce='sum')          # [N_total, H]
+        v_count  = scatter(valid.float(), clamped, dim=0,
+                           dim_size=N_total, reduce='sum'
+                           ).clamp(min=1).unsqueeze(-1)             # [N_total, 1]
+        node_emb = h_sum / v_count                                  # [N_total, H]
         return node_emb
 
 

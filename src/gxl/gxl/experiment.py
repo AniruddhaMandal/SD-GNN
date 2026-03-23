@@ -871,7 +871,7 @@ class Experiment:
                     sf_batch = self._build_link_targets(sf_batch)
 
             # SD-GNN needs per-node subgraphs regardless of sampler
-            if self.cfg.model_name in ('SD-GNN', 'ARCH-2', 'ARCH-2-V2'):
+            if self.cfg.model_name in ('SD-GNN', 'ARCH-2', 'ARCH-2-V2', 'ARCH-3', 'ARCH-4'):
                 sf_batch = self._build_all_node_targets(sf_batch)
 
             sf_batch = self._sample_and_load_subgraphs(sf_batch)
