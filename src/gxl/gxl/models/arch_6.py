@@ -390,8 +390,8 @@ class GPMgSWARDGraphEncoder(nn.Module):
         )
 
     def forward(self, sf: SubgraphFeaturesBatch) -> torch.Tensor:
-        sf.x = self.atom_encoder(sf.x.long().squeeze(-1))               # [N, H]
-        sf.edge_attr = self.bond_encoder(sf.edge_attr.long().squeeze(-1))  # [E, H]
+        sf.x = self.atom_encoder(sf.x.long().squeeze(-1))                    # [N, H]; atoms 0-indexed
+        sf.edge_attr = self.bond_encoder(sf.edge_attr.long().squeeze(-1) - 1)  # [E, H]; bonds 1-indexed → shift to 0
         node_embs = _gpm_encode(sf, self.initializer,
                                 self.local_transformer, self.aggregator)
 
@@ -518,8 +518,8 @@ class GPMgSWARDNodeEncoder(nn.Module):  # noqa: F811  (redefine cleanly)
 
     def forward(self, sf: SubgraphFeaturesBatch) -> torch.Tensor:
         device    = sf.x.device
-        sf.x = self.atom_encoder(sf.x.long().squeeze(-1))               # [N, H]
-        sf.edge_attr = self.bond_encoder(sf.edge_attr.long().squeeze(-1))  # [E, H]
+        sf.x = self.atom_encoder(sf.x.long().squeeze(-1))                    # [N, H]; atoms 0-indexed
+        sf.edge_attr = self.bond_encoder(sf.edge_attr.long().squeeze(-1) - 1)  # [E, H]; bonds 1-indexed → shift to 0
         node_embs = _gpm_encode(sf, self.initializer,
                                 self.local_transformer, self.aggregator)  # [N, H]
 
