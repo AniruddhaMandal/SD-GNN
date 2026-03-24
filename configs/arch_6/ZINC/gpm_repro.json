@@ -5,8 +5,8 @@
 
   "model_config": {
     "mpnn_type": "gine",
-    "node_feature_dim": 28,
-    "edge_feature_dim": 4,
+    "node_feature_dim": 21,
+    "edge_feature_dim": 3,
     "hidden_dim": 128,
     "mpnn_layers": 8,
     "dropout": 0.1,

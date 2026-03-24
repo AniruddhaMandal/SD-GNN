@@ -368,6 +368,8 @@ class GPMgSWARDGraphEncoder(nn.Module):
     ):
         super().__init__()
         # Learnable atom/bond embeddings: integer type → hidden_dim vector
+        # ZINC: atom types 0-20 (21 types), bond types 1-3 (3 types, 1-indexed → store as 0-2)
+        # in_channels / edge_dim from config are treated as vocab sizes
         self.atom_encoder = nn.Embedding(in_channels, hidden_dim)
         self.bond_encoder = nn.Embedding(edge_dim, hidden_dim)
         # After embedding, both node and edge features are hidden_dim-dimensional
@@ -390,14 +392,8 @@ class GPMgSWARDGraphEncoder(nn.Module):
         )
 
     def forward(self, sf: SubgraphFeaturesBatch) -> torch.Tensor:
-        x_raw = sf.x.long().squeeze(-1)
-        ea_raw = sf.edge_attr.long().squeeze(-1)
-        assert x_raw.min() >= 0 and x_raw.max() < self.atom_encoder.num_embeddings, \
-            f"atom idx out of range: min={x_raw.min()}, max={x_raw.max()}, vocab={self.atom_encoder.num_embeddings}"
-        assert ea_raw.min() >= 1 and ea_raw.max() <= self.bond_encoder.num_embeddings, \
-            f"bond idx out of range: min={ea_raw.min()}, max={ea_raw.max()}, vocab={self.bond_encoder.num_embeddings}"
-        sf.x = self.atom_encoder(x_raw)                    # [N, H]; atoms 0-indexed
-        sf.edge_attr = self.bond_encoder(ea_raw - 1)       # [E, H]; bonds 1-indexed → shift to 0
+        sf.x = self.atom_encoder(sf.x.long().squeeze(-1))                    # [N, H]; atoms 0-indexed
+        sf.edge_attr = self.bond_encoder(sf.edge_attr.long().squeeze(-1) - 1)  # [E, H]; bonds 1-indexed → shift to 0
         node_embs = _gpm_encode(sf, self.initializer,
                                 self.local_transformer, self.aggregator)
 

@@ -174,15 +174,12 @@ def build_tudata(cfg: ExperimentConfig):
 @register_dataset('ZINC')
 def build_zinc(cfg: ExperimentConfig):
     from torch_geometric.datasets import ZINC
-    from torch_geometric.transforms import ToUndirected
-    # Raw integer atom/bond features — embeddings are learned inside the model
-    transforms = ToUndirected()
-    train_dataset = ZINC(root='./data/ZINC', subset=True, split='train',
-                        pre_transform=transforms)
-    test_dataset = ZINC(root='./data/ZINC', subset=True, split='test',
-                        pre_transform=transforms)
-    val_dataset = ZINC(root='./data/ZINC', subset=True, split='val',
-                        pre_transform=transforms)
+    # No pre_transform: ZINC already stores edges in both directions.
+    # Raw integer features: x in [0,20], edge_attr in [1,3].
+    # Atom/bond embeddings are learned inside the model.
+    train_dataset = ZINC(root='./data/ZINC', subset=True, split='train')
+    test_dataset = ZINC(root='./data/ZINC', subset=True, split='test')
+    val_dataset = ZINC(root='./data/ZINC', subset=True, split='val')
     dataset = (train_dataset, test_dataset, val_dataset)
     return build_dataloaders_from_dataset(dataset, cfg)
 
