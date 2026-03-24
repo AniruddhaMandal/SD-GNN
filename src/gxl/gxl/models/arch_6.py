@@ -390,8 +390,14 @@ class GPMgSWARDGraphEncoder(nn.Module):
         )
 
     def forward(self, sf: SubgraphFeaturesBatch) -> torch.Tensor:
-        sf.x = self.atom_encoder(sf.x.long().squeeze(-1))                    # [N, H]; atoms 0-indexed
-        sf.edge_attr = self.bond_encoder(sf.edge_attr.long().squeeze(-1) - 1)  # [E, H]; bonds 1-indexed → shift to 0
+        x_raw = sf.x.long().squeeze(-1)
+        ea_raw = sf.edge_attr.long().squeeze(-1)
+        assert x_raw.min() >= 0 and x_raw.max() < self.atom_encoder.num_embeddings, \
+            f"atom idx out of range: min={x_raw.min()}, max={x_raw.max()}, vocab={self.atom_encoder.num_embeddings}"
+        assert ea_raw.min() >= 1 and ea_raw.max() <= self.bond_encoder.num_embeddings, \
+            f"bond idx out of range: min={ea_raw.min()}, max={ea_raw.max()}, vocab={self.bond_encoder.num_embeddings}"
+        sf.x = self.atom_encoder(x_raw)                    # [N, H]; atoms 0-indexed
+        sf.edge_attr = self.bond_encoder(ea_raw - 1)       # [E, H]; bonds 1-indexed → shift to 0
         node_embs = _gpm_encode(sf, self.initializer,
                                 self.local_transformer, self.aggregator)
 
