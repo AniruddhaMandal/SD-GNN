@@ -367,10 +367,14 @@ class GPMgSWARDGraphEncoder(nn.Module):
         ffn_dim:       int   = None,
     ):
         super().__init__()
-        self.initializer = LogProbNodeFeatureInitializer(in_channels, hidden_dim, mode=init_mode)
+        # Learnable atom/bond embeddings: integer type → hidden_dim vector
+        self.atom_encoder = nn.Embedding(in_channels, hidden_dim)
+        self.bond_encoder = nn.Embedding(edge_dim, hidden_dim)
+        # After embedding, both node and edge features are hidden_dim-dimensional
+        self.initializer = LogProbNodeFeatureInitializer(hidden_dim, hidden_dim, mode=init_mode)
         self.local_transformer = LocalSubgraphTransformer(
             hidden_dim=hidden_dim, num_heads=num_heads, num_layers=sub_layers,
-            dropout=dropout, edge_dim=edge_dim, use_edge_bias=use_edge_bias,
+            dropout=dropout, edge_dim=hidden_dim, use_edge_bias=use_edge_bias,
             ffn_dim=ffn_dim,
         )
         try:
@@ -381,11 +385,13 @@ class GPMgSWARDGraphEncoder(nn.Module):
             self.aggregator = global_mean_pool
         self.global_transformer = GlobalGraphTransformer(
             hidden_dim=hidden_dim, num_heads=num_heads, num_layers=global_layers,
-            dropout=dropout, edge_dim=edge_dim, use_edge_bias=use_edge_bias,
+            dropout=dropout, edge_dim=hidden_dim, use_edge_bias=use_edge_bias,
             ffn_dim=ffn_dim,
         )
 
     def forward(self, sf: SubgraphFeaturesBatch) -> torch.Tensor:
+        sf.x = self.atom_encoder(sf.x.long().squeeze(-1))               # [N, H]
+        sf.edge_attr = self.bond_encoder(sf.edge_attr.long().squeeze(-1))  # [E, H]
         node_embs = _gpm_encode(sf, self.initializer,
                                 self.local_transformer, self.aggregator)
 
@@ -477,10 +483,13 @@ class GPMgSWARDNodeEncoder(nn.Module):  # noqa: F811  (redefine cleanly)
         ffn_dim:       int   = None,
     ):
         super().__init__()
-        self.initializer = LogProbNodeFeatureInitializer(in_channels, hidden_dim, mode=init_mode)
+        # Learnable atom/bond embeddings: integer type → hidden_dim vector
+        self.atom_encoder = nn.Embedding(in_channels, hidden_dim)
+        self.bond_encoder = nn.Embedding(edge_dim, hidden_dim)
+        self.initializer = LogProbNodeFeatureInitializer(hidden_dim, hidden_dim, mode=init_mode)
         self.local_transformer = LocalSubgraphTransformer(
             hidden_dim=hidden_dim, num_heads=num_heads, num_layers=sub_layers,
-            dropout=dropout, edge_dim=edge_dim, use_edge_bias=use_edge_bias,
+            dropout=dropout, edge_dim=hidden_dim, use_edge_bias=use_edge_bias,
             ffn_dim=ffn_dim,
         )
         try:
@@ -499,16 +508,18 @@ class GPMgSWARDNodeEncoder(nn.Module):  # noqa: F811  (redefine cleanly)
         )
         self.global_transformer_enc = nn.TransformerEncoder(encoder_layer, num_layers=global_layers)
         self.global_norm = nn.LayerNorm(hidden_dim)
-        if use_edge_bias and edge_dim > 0:
-            self.global_edge_proj = nn.Linear(edge_dim, num_heads)
+        if use_edge_bias:
+            self.global_edge_proj = nn.Linear(hidden_dim, num_heads)
         else:
             self.global_edge_proj = None
         self.num_heads    = num_heads
-        self.use_edge_bias = use_edge_bias and (edge_dim > 0)
-        self.edge_dim      = edge_dim
+        self.use_edge_bias = use_edge_bias
+        self.hidden_dim    = hidden_dim
 
     def forward(self, sf: SubgraphFeaturesBatch) -> torch.Tensor:
         device    = sf.x.device
+        sf.x = self.atom_encoder(sf.x.long().squeeze(-1))               # [N, H]
+        sf.edge_attr = self.bond_encoder(sf.edge_attr.long().squeeze(-1))  # [E, H]
         node_embs = _gpm_encode(sf, self.initializer,
                                 self.local_transformer, self.aggregator)  # [N, H]
 

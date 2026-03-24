@@ -999,7 +999,10 @@ class Experiment:
 
         # Perform subgraph sampling on-the-fly
         try:
-            sampler_kwargs = dict(mode="sample", seed=self.cfg.seed)
+            # Use a varying seed during training for subgraph diversity; fixed seed for eval
+            import random
+            seed = random.randint(0, 2**31 - 1) if self.model.training else self.cfg.seed
+            sampler_kwargs = dict(mode="sample", seed=seed)
             if target_nodes is not None and target_ptr_t is not None:
                 sampler_kwargs['target_nodes'] = target_nodes.cpu()
                 sampler_kwargs['target_ptr'] = target_ptr_t.cpu()
