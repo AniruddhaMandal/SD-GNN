@@ -137,11 +137,16 @@ class Arch5GraphEncoder(nn.Module):
     ):
         super().__init__()
 
-        # Phase 1: subgraph encoder
+        # Learnable atom/bond embeddings (in_channels = atom vocab, edge_dim = bond vocab)
+        # ZINC: atom types 0-20, bond types 1-3 (shift to 0-2)
+        self.atom_encoder = nn.Embedding(in_channels, hidden_dim)
+        self.bond_encoder = nn.Embedding(edge_dim, hidden_dim)
+
+        # Phase 1: subgraph encoder — operates on hidden_dim features after embedding
         self.sub_encoder = IndependentSubgraphEncoder(
-            in_channels = in_channels,
+            in_channels = hidden_dim,
             hidden_dim  = hidden_dim,
-            edge_dim    = edge_dim,
+            edge_dim    = hidden_dim,
             num_layers  = sub_layers,
             mlp_layers  = mlp_layers,
             dropout     = dropout,
@@ -162,12 +167,12 @@ class Arch5GraphEncoder(nn.Module):
             else:
                 self.aggregator = global_mean_pool
 
-        # Phase 2: global GNN on original graph
+        # Phase 2: global GNN on original graph — edge features also hidden_dim after embedding
         self.global_layers = nn.ModuleList([
             GlobalGNNLayer(
                 in_channels  = hidden_dim,
                 out_channels = hidden_dim,
-                edge_dim     = edge_dim,
+                edge_dim     = hidden_dim,
                 mlp_layers   = mlp_layers,
                 conv_type    = conv_type,
                 dropout      = dropout,
@@ -188,6 +193,10 @@ class Arch5GraphEncoder(nn.Module):
 
     def forward(self, sf: SubgraphFeaturesBatch) -> torch.Tensor:
         device = sf.x.device
+
+        # Encode raw integer atom/bond types to hidden_dim vectors
+        sf.x = self.atom_encoder(sf.x.long().squeeze(-1))                      # [N, H]
+        sf.edge_attr = self.bond_encoder(sf.edge_attr.long().squeeze(-1) - 1)  # [E, H]
 
         # ── Phase 1: subgraph GNN ──────────────────────────────────────────
         root_embs, target_batch, log_probs, T, N_total = self.sub_encoder(sf)
@@ -239,10 +248,12 @@ class Arch5NodeEncoder(nn.Module):
         temperature:   float = 0.5,
     ):
         super().__init__()
+        self.atom_encoder = nn.Embedding(in_channels, hidden_dim)
+        self.bond_encoder = nn.Embedding(edge_dim, hidden_dim)
         self.sub_encoder = IndependentSubgraphEncoder(
-            in_channels = in_channels,
+            in_channels = hidden_dim,
             hidden_dim  = hidden_dim,
-            edge_dim    = edge_dim,
+            edge_dim    = hidden_dim,
             num_layers  = sub_layers,
             mlp_layers  = mlp_layers,
             dropout     = dropout,
@@ -265,7 +276,7 @@ class Arch5NodeEncoder(nn.Module):
             GlobalGNNLayer(
                 in_channels  = hidden_dim,
                 out_channels = hidden_dim,
-                edge_dim     = edge_dim,
+                edge_dim     = hidden_dim,
                 mlp_layers   = mlp_layers,
                 conv_type    = conv_type,
                 dropout      = dropout,
@@ -275,6 +286,8 @@ class Arch5NodeEncoder(nn.Module):
         ])
 
     def forward(self, sf: SubgraphFeaturesBatch) -> torch.Tensor:
+        sf.x = self.atom_encoder(sf.x.long().squeeze(-1))                      # [N, H]
+        sf.edge_attr = self.bond_encoder(sf.edge_attr.long().squeeze(-1) - 1)  # [E, H]
         root_embs, target_batch, log_probs, T, N_total = self.sub_encoder(sf)
 
         if getattr(self.aggregator, 'needs_log_probs', False):

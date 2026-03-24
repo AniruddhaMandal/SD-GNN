@@ -15,6 +15,7 @@ import gxl.models.arch_3    # noqa: F401
 import gxl.models.arch_4    # noqa: F401
 import gxl.models.arch_5    # noqa: F401
 import gxl.models.arch_6    # noqa: F401
+import gxl.models.arch_7    # noqa: F401
 
 
 class ExperimentModel(nn.Module):
