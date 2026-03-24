@@ -42,6 +42,7 @@ class VanillaGNNClassifier(nn.Module):
                  conv_type: str = 'gine',
                  pooling: str = 'mean',
                  residual: bool = True,
+                 use_embedding: bool = False,  # True: treat in_channels/edge_dim as vocab sizes
                  # PNA parameters
                  deg: torch.Tensor = None,
                  # GCNII parameters
@@ -75,12 +76,22 @@ class VanillaGNNClassifier(nn.Module):
             self.deg = None
 
         # Project inputs to hidden_dim once so all layers are width-matched.
-        self.node_proj = nn.Linear(in_channels, hidden_dim)
+        # use_embedding=True: treat in_channels/edge_dim as vocab sizes (nn.Embedding)
+        #   for datasets with raw integer features like ZINC (atom type 0-20, bond type 1-3)
+        # use_embedding=False: treat as feature dim (nn.Linear) — for continuous/one-hot features
+        self.use_embedding = use_embedding
+        if use_embedding:
+            self.node_proj = nn.Embedding(in_channels, hidden_dim)
+        else:
+            self.node_proj = nn.Linear(in_channels, hidden_dim)
 
         # If using edge features (only GINE uses them directly)
         self.use_edges = (conv_type == 'gine')
         if self.use_edges:
-            self.edge_proj = nn.Linear(edge_dim, hidden_dim)
+            if use_embedding:
+                self.edge_proj = nn.Embedding(edge_dim, hidden_dim)
+            else:
+                self.edge_proj = nn.Linear(edge_dim, hidden_dim)
 
         # Build layers
         self.convs = nn.ModuleList()
@@ -146,12 +157,19 @@ class VanillaGNNClassifier(nn.Module):
         edge_attr = batch.edge_attr
         edge_index = batch.edge_index
         
-        h = self.node_proj(x)
+        if self.use_embedding:
+            h = self.node_proj(x.long().squeeze(-1))
+        else:
+            h = self.node_proj(x)
         h_0 = h  # Initial features for GCNII
         if self.use_edges:
             if edge_attr is None:
                 raise ValueError("edge_attr is required for conv_type='gine'.")
-            e = self.edge_proj(edge_attr)
+            if self.use_embedding:
+                # ZINC bond types are 1-indexed (1-3); shift to 0-indexed
+                e = self.edge_proj(edge_attr.long().squeeze(-1) - 1)
+            else:
+                e = self.edge_proj(edge_attr)
         
         layer_outputs = []
         for i, (conv, bn) in enumerate(zip(self.convs, self.bns)):
@@ -205,6 +223,7 @@ def build_vanilla(cfg: ExperimentConfig):
         conv_type=cfg.model_config.mpnn_type,
         pooling=pooling,
         residual=residual,
+        use_embedding=cfg.model_config.kwargs.get('use_embedding', False),
         gcnii_alpha=gcnii_alpha,
         gcnii_theta=gcnii_theta,
         jk_mode=jk_mode,
