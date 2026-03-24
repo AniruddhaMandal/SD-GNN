@@ -1,21 +1,26 @@
 """
 ARCH-7: Interleaved Subgraph + Global GNN (SUN-inspired)
 
-Implements SUN's three core ideas in the SD-GNN framework:
+Three components, each addressing a specific gap vs SUN:
 
-  1. All-node subgraph pooling — all k nodes per subgraph contribute to the final
-     readout, not just the root node (which ARCH-5 discards 9/10 of computation).
+  1. Per-layer interleaved local + global GNN:
+       h1  = local_gnn(intra-subgraph edges)          # [S*k, H]
+       x_sum = scatter_mean(h_flat, node_ids)          # [N, H] — per canonical node
+       h2  = global_gnn(x_sum, original_edges)         # [N, H]
+       h_skip = skip_proj(h_flat)                      # [S*k, H] — SUN's x_kv term
+       h_sub = scatter_mean(h_flat, sub_batch)         # [S, H] — SUN's readout term
+       h_flat = ReLU(h_skip + h1 + h2[node_ids] + readout_mlp(h_sub)[sub_batch])
 
-  2. Per-layer interleaved local + global GNN — at every layer:
-       h1 = local_gnn(intra-subgraph edges)
-       x_sum = mean of h over all canonical node appearances
-       h2 = global_gnn(x_sum, original_graph_edges)
-       h_flat = ReLU(BN(h1) + BN(h2)[node_ids])
-     Both branches run in parallel with independent weights. Each subgraph node
-     gets global graph context at every layer via h2[node_ids].
+  2. All-node subgraph broadcast (h_sub): pools all nodes per subgraph and
+     broadcasts back, bypassing edge sparsity in random graphlets. This is
+     SUN's "readout" term that lets disconnected nodes in the same graphlet
+     share information.
 
-  3. Mean-of-subgraphs final readout — mean pool all nodes per subgraph, then
-     mean over subgraphs per graph (matches SUN exactly).
+  3. Correct readout:
+       node_embs = scatter_mean(h_flat, node_ids)      # [N, H]
+       h_graph   = global_add_pool(node_embs, batch)   # [B, H]  — SUM not mean
+     Sum pooling over canonical node embeddings matches the standard GNN readout
+     (vanilla GIN uses sum pooling; mean-of-mean-of-subgraphs loses additive structure).
 """
 
 import torch
@@ -23,6 +28,7 @@ from torch import nn
 from torch.nn import functional as F
 from torch_geometric.nn import (
     GINEConv, GINConv, GCNConv, SAGEConv,
+    global_add_pool,
 )
 from torch_geometric.nn.norm import BatchNorm
 from torch_geometric.utils import scatter
@@ -31,20 +37,12 @@ from gxl import SubgraphFeaturesBatch, ExperimentConfig
 from gxl.registry import register_model
 from gxl.models.arch_2_v2 import make_mlp, _flatten_subgraphs
 
-from typing import Literal
-
 
 # ---------------------------------------------------------------------------
 # Conv factory
 # ---------------------------------------------------------------------------
 
-def _make_conv(
-    conv_type:  str,
-    in_dim:     int,
-    out_dim:    int,
-    edge_dim:   int,
-    mlp_layers: int,
-):
+def _make_conv(conv_type, in_dim, out_dim, edge_dim, mlp_layers):
     if conv_type == 'gine':
         return GINEConv(
             make_mlp(in_dim, in_dim, out_dim, mlp_layers),
@@ -68,12 +66,14 @@ def _make_conv(
 
 class Arch7Layer(nn.Module):
     """
-    One interleaved local + global GNN layer.
+    One interleaved local + global GNN layer with subgraph broadcast and skip.
 
-    Local branch:  GNN on flat [S*k] space using intra-subgraph edges only.
-    Global branch: GNN on x_sum (per-canonical-node mean of h_flat) using
-                   the original full-graph edges.
-    Combine:       h_flat = ReLU(BN(h_local) + BN(h_global)[node_ids])
+    Combines four terms:
+      h_skip  — learnable transform of current h_flat (SUN's x_kv: skip connection)
+      h1      — local GNN on intra-subgraph edges (captures local graphlet structure)
+      h2      — global GNN on x_sum broadcast back to flat space (full-graph context)
+      h_sub   — subgraph-level mean broadcast back to all nodes in the same subgraph
+                (SUN's readout term; lets disconnected graphlet nodes share info)
     """
 
     def __init__(
@@ -88,41 +88,54 @@ class Arch7Layer(nn.Module):
         self.use_edge_attr = (conv_type == 'gine')
         self.dropout = dropout
 
-        self.local_conv  = _make_conv(conv_type, hidden_dim, hidden_dim, edge_dim, mlp_layers)
-        self.local_bn    = BatchNorm(hidden_dim)
+        # Local branch
+        self.local_conv = _make_conv(conv_type, hidden_dim, hidden_dim, edge_dim, mlp_layers)
+        self.local_bn   = BatchNorm(hidden_dim)
 
+        # Global branch (runs on x_sum = per-canonical-node mean of h_flat)
         self.global_conv = _make_conv(conv_type, hidden_dim, hidden_dim, edge_dim, mlp_layers)
         self.global_bn   = BatchNorm(hidden_dim)
+
+        # Skip connection (SUN's x_kv — learned transform of current node rep)
+        self.skip_proj = nn.Linear(hidden_dim, hidden_dim)
+
+        # Subgraph-level broadcast (SUN's readout — mean of all nodes in subgraph → each node)
+        self.sub_readout_mlp = make_mlp(hidden_dim, hidden_dim, hidden_dim, mlp_layers)
+        self.sub_readout_bn  = BatchNorm(hidden_dim)
 
     def forward(
         self,
         h_flat:     torch.Tensor,   # [S*k, H]
-        intra_ei:   torch.Tensor,   # [2, E_sub] — intra-subgraph edges in flat index space
+        intra_ei:   torch.Tensor,   # [2, E_sub]
         ea_flat:    torch.Tensor,   # [E_sub, H] or None
-        valid:      torch.Tensor,   # [S*k] bool — False for padding positions
-        node_ids:   torch.Tensor,   # [S*k] int  — canonical node id, -1 for padding
+        valid:      torch.Tensor,   # [S*k] bool
+        node_ids:   torch.Tensor,   # [S*k] int, -1 = padding
         N_total:    int,
-        edge_index: torch.Tensor,   # [2, E] original graph edges
-        edge_attr:  torch.Tensor,   # [E, H] original edge attrs
+        edge_index: torch.Tensor,   # [2, E] original graph
+        edge_attr:  torch.Tensor,   # [E, H]
+        sub_batch:  torch.Tensor,   # [S*k] int, subgraph index per flat position
+        S:          int,            # total number of subgraphs in batch
     ) -> torch.Tensor:               # [S*k, H]
 
-        valid_f     = valid.float().unsqueeze(-1)   # [S*k, 1]
-        clamped_ids = node_ids.clamp(min=0)         # [S*k], padding clamped to 0
+        valid_f     = valid.float().unsqueeze(-1)
+        clamped_ids = node_ids.clamp(min=0)
+        valid_mask  = node_ids >= 0   # alias for valid, but avoids recomputing
+
+        # ── skip (x_kv) ────────────────────────────────────────────────────
+        h_skip = self.skip_proj(h_flat) * valid_f          # [S*k, H]
 
         # ── local GNN ──────────────────────────────────────────────────────
         if self.use_edge_attr and ea_flat is not None:
             h1 = self.local_conv(h_flat, intra_ei, ea_flat)
         else:
             h1 = self.local_conv(h_flat, intra_ei)
-        h1 = h1 * valid_f               # zero out padding before BN
+        h1 = h1 * valid_f
         h1 = self.local_bn(h1)
-        h1 = h1 * valid_f               # re-zero after BN (BN can shift zeros)
+        h1 = h1 * valid_f
 
-        # ── x_sum: mean of h_flat over all appearances of each canonical node ──
-        valid_mask = node_ids >= 0      # [S*k] — same as valid, but clearer intent
+        # ── x_sum: per-canonical-node mean (only valid positions) ──────────
         x_sum = scatter(
-            h_flat[valid_mask],
-            node_ids[valid_mask],
+            h_flat[valid_mask], node_ids[valid_mask],
             dim=0, reduce='mean', dim_size=N_total,
         )   # [N_total, H]
 
@@ -131,15 +144,22 @@ class Arch7Layer(nn.Module):
             h2 = self.global_conv(x_sum, edge_index, edge_attr)
         else:
             h2 = self.global_conv(x_sum, edge_index)
-        h2 = self.global_bn(h2)        # [N_total, H]
+        h2 = self.global_bn(h2)                            # [N_total, H]
+        h2_bcast = h2[clamped_ids] * valid_f               # [S*k, H]
 
-        # ── broadcast global context back to flat subgraph positions ───────
-        h2_bcast = h2[clamped_ids] * valid_f    # [S*k, H], padding zeroed
+        # ── subgraph-level broadcast (SUN's readout term) ──────────────────
+        # Pool all valid nodes per subgraph, apply MLP, broadcast back
+        h_sub = scatter(
+            h_flat[valid_mask], sub_batch[valid_mask],
+            dim=0, reduce='mean', dim_size=S,
+        )   # [S, H]
+        h_sub = self.sub_readout_bn(self.sub_readout_mlp(h_sub))  # [S, H]
+        h_sub_bcast = h_sub[sub_batch] * valid_f           # [S*k, H]
 
-        # ── combine ────────────────────────────────────────────────────────
-        out = F.relu(h1 + h2_bcast)
+        # ── combine all four terms ──────────────────────────────────────────
+        out = F.relu(h_skip + h1 + h2_bcast + h_sub_bcast)
         out = F.dropout(out, p=self.dropout, training=self.training)
-        out = out * valid_f             # ensure padding stays zero after dropout
+        out = out * valid_f
         return out
 
 
@@ -149,7 +169,11 @@ class Arch7Layer(nn.Module):
 
 class Arch7GraphEncoder(nn.Module):
     """
-    embed → flatten → L interleaved layers → mean subgraph pool → mean graph pool → [B, H]
+    embed → flatten → L interleaved layers → scatter_mean per node → sum_pool → [B, H]
+
+    Readout: per-canonical-node mean of all subgraph appearances, then sum_pool.
+    This matches the standard GNN readout (vanilla GIN uses sum_pool), avoiding
+    the double-mean that was hurting the previous version.
     """
 
     def __init__(
@@ -174,47 +198,32 @@ class Arch7GraphEncoder(nn.Module):
     def forward(self, sf: SubgraphFeaturesBatch) -> torch.Tensor:
         device = sf.x.device
 
-        # Embed raw integer atom/bond types
-        sf.x        = self.atom_encoder(sf.x.long().squeeze(-1))                      # [N, H]
-        sf.edge_attr = self.bond_encoder(sf.edge_attr.long().squeeze(-1) - 1)         # [E, H]
+        sf.x         = self.atom_encoder(sf.x.long().squeeze(-1))                      # [N, H]
+        sf.edge_attr = self.bond_encoder(sf.edge_attr.long().squeeze(-1) - 1)          # [E, H]
 
-        # Flatten into [S*k] space; ea_flat uses the already-embedded sf.edge_attr
         x_flat, ea_flat, intra_ei, sub_batch, node_ids, valid, N_total = \
             _flatten_subgraphs(sf)
 
-        h_flat = x_flat   # [S*k, H], padding zeroed by _flatten_subgraphs
+        h_flat = x_flat
+        S      = sf.nodes_sampled.shape[0]
+        B      = sf.sample_ptr.size(0) - 1
 
-        S = sf.nodes_sampled.shape[0]
-
-        # Subgraph → graph batch mapping via sample_ptr [B+1]
-        B = sf.sample_ptr.size(0) - 1
-        subgraph_graph_batch = torch.repeat_interleave(
-            torch.arange(B, device=device),
-            sf.sample_ptr[1:] - sf.sample_ptr[:-1],
-        )   # [S]
-
-        # Interleaved local + global layers
         for layer in self.layers:
             h_flat = layer(
                 h_flat, intra_ei, ea_flat, valid,
                 node_ids, N_total, sf.edge_index, sf.edge_attr,
+                sub_batch, S,
             )
 
-        # Mean-pool all valid nodes per subgraph → [S, H]
+        # ── Readout: mean over subgraph appearances per canonical node ──────
         valid_mask = node_ids >= 0
-        h_sub = scatter(
-            h_flat[valid_mask],
-            sub_batch[valid_mask],
-            dim=0, reduce='mean', dim_size=S,
-        )
+        node_embs = scatter(
+            h_flat[valid_mask], node_ids[valid_mask],
+            dim=0, reduce='mean', dim_size=N_total,
+        )   # [N_total, H]
 
-        # Mean over subgraphs per graph → [B, H]
-        h_graph = scatter(
-            h_sub, subgraph_graph_batch,
-            dim=0, reduce='mean', dim_size=B,
-        )
-
-        return h_graph   # [B, H]
+        # Sum-pool canonical node embeddings per graph → [B, H]
+        return global_add_pool(node_embs, sf.batch)
 
 
 # ---------------------------------------------------------------------------
@@ -222,10 +231,7 @@ class Arch7GraphEncoder(nn.Module):
 # ---------------------------------------------------------------------------
 
 class Arch7NodeEncoder(nn.Module):
-    """
-    Same pipeline but returns per-node embeddings for node classification /
-    link prediction tasks.
-    """
+    """Node-level variant: returns per-node embeddings [N_total, H]."""
 
     def __init__(
         self,
@@ -249,29 +255,27 @@ class Arch7NodeEncoder(nn.Module):
     def forward(self, sf: SubgraphFeaturesBatch) -> torch.Tensor:
         device = sf.x.device
 
-        sf.x        = self.atom_encoder(sf.x.long().squeeze(-1))
+        sf.x         = self.atom_encoder(sf.x.long().squeeze(-1))
         sf.edge_attr = self.bond_encoder(sf.edge_attr.long().squeeze(-1) - 1)
 
         x_flat, ea_flat, intra_ei, sub_batch, node_ids, valid, N_total = \
             _flatten_subgraphs(sf)
 
         h_flat = x_flat
+        S      = sf.nodes_sampled.shape[0]
 
         for layer in self.layers:
             h_flat = layer(
                 h_flat, intra_ei, ea_flat, valid,
                 node_ids, N_total, sf.edge_index, sf.edge_attr,
+                sub_batch, S,
             )
 
-        # Aggregate: mean over all subgraph appearances per canonical node → [N_total, H]
         valid_mask = node_ids >= 0
-        node_embs = scatter(
-            h_flat[valid_mask],
-            node_ids[valid_mask],
+        return scatter(
+            h_flat[valid_mask], node_ids[valid_mask],
             dim=0, reduce='mean', dim_size=N_total,
-        )
-
-        return node_embs   # [N_total, H]
+        )   # [N_total, H]
 
 
 # ---------------------------------------------------------------------------
