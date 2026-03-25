@@ -1,0 +1,46 @@
+{
+  "dataset_name": "ZINC",
+  "model_name": "ARCH-8-A",
+  "task": "Regression",
+
+  "model_config": {
+    "mpnn_type": "gine",
+    "node_feature_dim": 21,
+    "edge_feature_dim": 3,
+    "hidden_dim": 64,
+    "mpnn_layers": 6,
+    "dropout": 0.0,
+    "out_dim": 1,
+    "pooling": "sum",
+    "subgraph_sampling": true,
+    "subgraph_param": { "k": 10, "m": 32, "pooling": "mean" },
+    "kwargs": {
+      "mlp_layers": 2,
+      "num_heads": 4
+    }
+  },
+
+  "train": {
+    "epochs": 400,
+    "train_batch_size": 128,
+    "val_batch_size": 256,
+    "lr": 1e-3,
+    "weight_decay": 0.0,
+    "optimizer": "adam",
+    "scheduler": {
+      "type": "reduce_on_plateau",
+      "patience": 40,
+      "factor": 0.5
+    },
+    "loss_fn": "L1Loss",
+    "metric": "MAE",
+    "grad_clip": 1.0
+  },
+
+  "device": "cuda",
+  "seed": 42,
+  "num_workers": 2,
+  "save_every": 10,
+  "keep_last_k": 3,
+  "sampler": "graphlet"
+}
