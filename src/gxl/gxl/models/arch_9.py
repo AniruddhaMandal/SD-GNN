@@ -143,13 +143,16 @@ class Arch9Layer(nn.Module):
         h_non_root   = self.self_proj(h_flat) + self.root_proj(h_root_bcast)
 
         # ── root branch: inter-root GINE on original graph ────────────────────
-        # Canonical root representation = mean of each canonical node's root positions
-        h_roots          = h_flat[root_flat_idx]           # [S, H]
-        root_ids         = node_ids[root_flat_idx]         # [S]
+        # Canonical root representation = mean of each canonical node's root positions.
+        # root_ids may be -1 for degenerate subgraphs (graph smaller than k).
+        # Filter those out before scatter to avoid CUDA out-of-bounds assert.
+        h_roots  = h_flat[root_flat_idx]           # [S, H]
+        root_ids = node_ids[root_flat_idx]         # [S]
+        root_valid = root_ids >= 0                 # [S] bool
         h_root_canonical = scatter(
-            h_roots, root_ids,
+            h_roots[root_valid], root_ids[root_valid],
             dim=0, reduce='mean', dim_size=N_total,
-        )   # [N_total, H]
+        )   # [N_total, H] — nodes with no valid root get zeros
 
         h_inter      = self.inter_conv(h_root_canonical, edge_index, edge_attr)
         h_inter      = self.inter_bn(h_inter)              # [N_total, H]
@@ -239,8 +242,11 @@ class Arch9GraphEncoder(nn.Module):
 
         # ── log-sampling-probability PE ───────────────────────────────────────
         if sf.log_probs is not None:
-            # sf.log_probs: [S], one logP per subgraph
-            logp_per_pos = sf.log_probs[sub_batch].unsqueeze(-1)   # [S*k, 1]
+            # sf.log_probs: [S], one logP per subgraph (-inf for degenerate ones)
+            # Sanitize -inf/nan before projecting to avoid inf propagation
+            lp = sf.log_probs.clone()
+            lp[~torch.isfinite(lp)] = 0.0
+            logp_per_pos = lp[sub_batch].unsqueeze(-1)             # [S*k, 1]
             logp_pe      = self.logp_proj(logp_per_pos)             # [S*k, H]
         else:
             logp_pe = torch.zeros_like(x_flat)
@@ -266,9 +272,11 @@ class Arch9GraphEncoder(nn.Module):
         )   # [S, H]
 
         # Step 2: group m subgraph reps per canonical root node → [N_total, m, H]
-        root_ids = node_ids[root_flat_idx]                     # [S] canonical root IDs
-        order    = torch.argsort(root_ids, stable=True)
-        h_sub_2d = h_sub[order].view(N_total, m, h_sub.shape[-1])   # [N_total, m, H]
+        # The sampler produces subgraphs in m-contiguous order per target node
+        # (see graphlet_sampler.cpp Phase 1b), so h_sub is already ordered:
+        #   h_sub[j*m : (j+1)*m] are the m subgraphs for canonical node j.
+        # No argsort needed; direct view is correct and handles degenerate subgraphs.
+        h_sub_2d = h_sub.view(N_total, m, h_sub.shape[-1])     # [N_total, m, H]
 
         # Step 3: self-attention over m subgraph reps + residual
         h_attn, _ = self.readout_mha(h_sub_2d, h_sub_2d, h_sub_2d)  # [N_total, m, H]
@@ -335,7 +343,9 @@ class Arch9NodeEncoder(nn.Module):
         dist_pe = self.dist_encoder(dist)
 
         if sf.log_probs is not None:
-            logp_pe = self.logp_proj(sf.log_probs[sub_batch].unsqueeze(-1))
+            lp = sf.log_probs.clone()
+            lp[~torch.isfinite(lp)] = 0.0
+            logp_pe = self.logp_proj(lp[sub_batch].unsqueeze(-1))
         else:
             logp_pe = torch.zeros_like(x_flat)
 
@@ -355,9 +365,7 @@ class Arch9NodeEncoder(nn.Module):
             dim=0, reduce='sum', dim_size=S,
         )
 
-        root_ids = node_ids[root_flat_idx]
-        order    = torch.argsort(root_ids, stable=True)
-        h_sub_2d = h_sub[order].view(N_total, m, h_sub.shape[-1])
+        h_sub_2d = h_sub.view(N_total, m, h_sub.shape[-1])
 
         h_attn, _ = self.readout_mha(h_sub_2d, h_sub_2d, h_sub_2d)
         h_attn    = h_attn + h_sub_2d
