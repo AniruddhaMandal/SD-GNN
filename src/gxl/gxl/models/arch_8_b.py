@@ -74,38 +74,47 @@ def _bfs_distances(intra_ei: torch.Tensor, S: int, k: int) -> torch.Tensor:
     Compute BFS distance from each subgraph's root (flat position s*k) to every
     other flat position in the same subgraph, using intra-subgraph edges.
 
-    Algorithm: iterative edge relaxation (Bellman-Ford style for unweighted
-    graphs = BFS). Runs at most k-1 rounds; terminates early if converged.
+    Algorithm: iterative min-distance propagation using PyG scatter with self-loops.
+    Self-loops ensure every position is covered so fill_value=0 for unindexed
+    positions in scatter('min') never causes spurious zeroing.
+    Runs at most k-1 rounds; terminates early if converged.
 
     Returns:
         dist  [S*k]  long tensor, values in [0, k].
-               Root positions = 0. Disconnected positions = k (clamped).
+               Root positions = 0. Disconnected/padding positions = k (clamped).
+
+    Note: uses float32 internally to avoid scatter 'min' dtype issues on CUDA,
+    converts to long at the end.
     """
     device = intra_ei.device
     n      = S * k
-    INF    = k  # anything >= k signals "unreachable"
+    INF    = float(k + 1)
 
-    dist = torch.full((n,), INF, dtype=torch.long, device=device)
-    # Roots are the first node in each subgraph
+    dist = torch.full((n,), INF, dtype=torch.float32, device=device)
     root_idx = torch.arange(S, device=device) * k
-    dist[root_idx] = 0
+    dist[root_idx] = 0.0
 
     if intra_ei.shape[1] == 0:
-        return dist
+        return dist.clamp(max=k).long()
 
-    # Make undirected by adding reverse edges
+    # Make undirected
     src = torch.cat([intra_ei[0], intra_ei[1]])   # [2*E_sub]
     dst = torch.cat([intra_ei[1], intra_ei[0]])   # [2*E_sub]
 
-    for _ in range(k - 1):
-        prop = (dist[src] + 1).clamp(max=INF)     # [2*E_sub] proposed distances
-        prev = dist.clone()
-        # In-place min-scatter: dist[dst] = min(dist[dst], prop)
-        dist.scatter_reduce_(0, dst, prop, reduce='amin', include_self=True)
-        if torch.equal(dist, prev):               # early stop if converged
-            break
+    # Self-loop indices: position i → i (carry current dist, so unindexed positions
+    # keep their current value after scatter reduce='min')
+    self_idx = torch.arange(n, device=device)
 
-    return dist   # [S*k], values in [0, k]
+    for _ in range(k - 1):
+        prop     = (dist[src] + 1.0).clamp(max=INF)       # [2*E_sub]
+        all_dst  = torch.cat([dst, self_idx])              # edges + self-loops
+        all_prop = torch.cat([prop, dist])                 # msgs  + current dist
+        new_dist = scatter(all_prop, all_dst, dim=0, reduce='min', dim_size=n)
+        if torch.equal(new_dist, dist):
+            break
+        dist = new_dist
+
+    return dist.clamp(max=k).long()   # [S*k], values in [0, k]
 
 
 # ---------------------------------------------------------------------------
