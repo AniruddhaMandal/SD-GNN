@@ -133,11 +133,13 @@ class Arch7V3GraphEncoder(nn.Module):
         else:
             lp = torch.zeros(S, device=device)
 
-        # ── Stage 1: subgraph pooling — sum over valid node positions ─────
+        # ── Stage 1: subgraph pooling — mean over valid node positions ───
+        # Mean (not sum) keeps magnitudes consistent regardless of how many
+        # valid nodes a subgraph has, so Stage 2 HT weights are not distorted.
         valid_mask = node_ids >= 0
         h_sub = scatter(
             h_flat[valid_mask], sub_batch[valid_mask],
-            dim=0, reduce='sum', dim_size=S,
+            dim=0, reduce='mean', dim_size=S,
         )   # [S, H]
 
         # ── Stage 2: HT-weighted node pooling ────────────────────────────
@@ -212,7 +214,7 @@ class Arch7V3NodeEncoder(nn.Module):
         valid_mask = node_ids >= 0
         h_sub = scatter(
             h_flat[valid_mask], sub_batch[valid_mask],
-            dim=0, reduce='sum', dim_size=S,
+            dim=0, reduce='mean', dim_size=S,
         )   # [S, H]
 
         return _ht_node_pool(h_sub, lp, m, N_total, self.ht_alpha)  # [N_total, H]
