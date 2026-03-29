@@ -133,7 +133,8 @@ def _encode(
 ) -> tuple:
     """Run embedding + MP, return (h_flat, node_ids, sub_batch, N_total, S, m, lp)."""
     if not sf.x.is_floating_point():
-        sf.x         = atom_encoder(sf.x.long().squeeze(-1))
+        sf.x = atom_encoder(sf.x.long().squeeze(-1))
+    if sf.edge_attr is not None and not sf.edge_attr.is_floating_point():
         sf.edge_attr = bond_encoder(sf.edge_attr.long().squeeze(-1) - 1)
 
     x_flat, ea_flat, intra_ei, sub_batch, node_ids, valid, N_total = \

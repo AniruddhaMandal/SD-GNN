@@ -196,8 +196,8 @@ class Arch7V2GraphEncoder(nn.Module):
 
     def forward(self, sf: SubgraphFeaturesBatch) -> torch.Tensor:
         if not sf.x.is_floating_point():
-            # Raw integer indices (e.g. ZINC): embed via learned tables
-            sf.x         = self.atom_encoder(sf.x.long().squeeze(-1))
+            sf.x = self.atom_encoder(sf.x.long().squeeze(-1))
+        if sf.edge_attr is not None and not sf.edge_attr.is_floating_point():
             sf.edge_attr = self.bond_encoder(sf.edge_attr.long().squeeze(-1) - 1)
         # else: already encoded to hidden_dim by dataset transform (e.g. OGBAtomEncoder)
 
