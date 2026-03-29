@@ -195,8 +195,11 @@ class Arch7V2GraphEncoder(nn.Module):
         ])
 
     def forward(self, sf: SubgraphFeaturesBatch) -> torch.Tensor:
-        sf.x         = self.atom_encoder(sf.x.long().squeeze(-1))
-        sf.edge_attr = self.bond_encoder(sf.edge_attr.long().squeeze(-1) - 1)
+        if not sf.x.is_floating_point():
+            # Raw integer indices (e.g. ZINC): embed via learned tables
+            sf.x         = self.atom_encoder(sf.x.long().squeeze(-1))
+            sf.edge_attr = self.bond_encoder(sf.edge_attr.long().squeeze(-1) - 1)
+        # else: already encoded to hidden_dim by dataset transform (e.g. OGBAtomEncoder)
 
         x_flat, ea_flat, intra_ei, sub_batch, node_ids, valid, N_total = \
             _flatten_subgraphs(sf)
@@ -260,8 +263,9 @@ class Arch7V2NodeEncoder(nn.Module):
         ])
 
     def forward(self, sf: SubgraphFeaturesBatch) -> torch.Tensor:
-        sf.x         = self.atom_encoder(sf.x.long().squeeze(-1))
-        sf.edge_attr = self.bond_encoder(sf.edge_attr.long().squeeze(-1) - 1)
+        if not sf.x.is_floating_point():
+            sf.x         = self.atom_encoder(sf.x.long().squeeze(-1))
+            sf.edge_attr = self.bond_encoder(sf.edge_attr.long().squeeze(-1) - 1)
 
         x_flat, ea_flat, intra_ei, sub_batch, node_ids, valid, N_total = \
             _flatten_subgraphs(sf)
