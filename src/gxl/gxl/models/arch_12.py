@@ -297,6 +297,7 @@ class Arch12GraphEncoder(nn.Module):
     ):
         super().__init__()
         H = hidden_dim
+        self.hidden_dim = hidden_dim
         self.lap_pe_dim = lap_pe_dim
 
         # Input encoders
@@ -334,8 +335,15 @@ class Arch12GraphEncoder(nn.Module):
         # ── Stage 1: encode atoms and bonds ─────────────────────────────────
         if not sf.x.is_floating_point():
             sf.x = self.atom_encoder(sf.x.long().squeeze(-1))
-        if sf.edge_attr is not None and not sf.edge_attr.is_floating_point():
-            sf.edge_attr = self.bond_encoder(sf.edge_attr.long().squeeze(-1) - 1)
+        # Robust edge-attr check: also encode when the tensor is 1D (which
+        # happens in some PyG/ZINC versions where bond types are float scalars)
+        # or when the last dimension doesn't match hidden_dim yet.
+        if sf.edge_attr is not None and (
+            not sf.edge_attr.is_floating_point()
+            or sf.edge_attr.dim() < 2
+            or sf.edge_attr.shape[-1] != self.hidden_dim
+        ):
+            sf.edge_attr = self.bond_encoder(sf.edge_attr.long().view(-1) - 1)
 
         # ── Stage 1b: (optional) LapPE on original graph ────────────────────
         if self.lap_pe_dim > 0:
