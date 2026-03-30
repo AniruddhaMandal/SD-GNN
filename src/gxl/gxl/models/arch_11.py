@@ -43,13 +43,15 @@ from gxl.models.arch_7 import _make_conv
 
 class SubgraphViewAttn(nn.Module):
     """
-    Pre-norm Transformer encoder block that attends over m subgraph views.
+    Memory-efficient pre-norm Transformer block over m subgraph views.
 
     Input:  [N_total, m, H]
     Output: [N_total, H]   (mean-pool over m attended tokens)
 
-    Uses pre-norm (norm before attention/FFN) for training stability.
-    FFN uses GELU with 4× expansion, matching standard Transformer practice.
+    Uses F.scaled_dot_product_attention (Flash Attention when available) to
+    avoid materialising the full [N, heads, m, m] weight matrix — the main
+    memory culprit with nn.MultiheadAttention.  FFN uses 2× expansion instead
+    of the usual 4× to halve the intermediate [N, m, 2H] activation size.
     """
 
     def __init__(self, hidden_dim: int, num_heads: int, dropout: float = 0.0):
@@ -58,24 +60,42 @@ class SubgraphViewAttn(nn.Module):
             f"hidden_dim ({hidden_dim}) must be divisible by num_heads ({num_heads})"
         )
         H = hidden_dim
-        self.norm1 = nn.LayerNorm(H)
-        self.attn  = nn.MultiheadAttention(
-            H, num_heads, dropout=dropout, batch_first=True,
-        )
-        self.norm2 = nn.LayerNorm(H)
-        self.ffn   = nn.Sequential(
-            nn.Linear(H, 4 * H),
+        self.num_heads = num_heads
+        self.head_dim  = H // num_heads
+        self.dropout   = dropout
+
+        self.norm1    = nn.LayerNorm(H)
+        self.qkv_proj = nn.Linear(H, 3 * H, bias=False)
+        self.out_proj  = nn.Linear(H, H)
+        self.norm2    = nn.LayerNorm(H)
+        self.ffn      = nn.Sequential(
+            nn.Linear(H, 2 * H),   # 2× expansion (not 4×) to save memory
             nn.GELU(),
             nn.Dropout(dropout),
-            nn.Linear(4 * H, H),
-            nn.Dropout(dropout),
+            nn.Linear(2 * H, H),
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # x: [N_total, m, H]
-        r = self.norm1(x)
-        r, _ = self.attn(r, r, r, need_weights=False)
+        N, m, H = x.shape
+        nh, hd  = self.num_heads, self.head_dim
+
+        # Pre-norm self-attention via Flash Attention
+        r   = self.norm1(x)
+        qkv = self.qkv_proj(r)                          # [N, m, 3H]
+        q, k, v = qkv.chunk(3, dim=-1)
+        # reshape to [N, heads, m, head_dim] for scaled_dot_product_attention
+        q = q.view(N, m, nh, hd).transpose(1, 2)
+        k = k.view(N, m, nh, hd).transpose(1, 2)
+        v = v.view(N, m, nh, hd).transpose(1, 2)
+        # Flash Attention: never stores the [N, heads, m, m] weight matrix
+        attn_drop = self.dropout if self.training else 0.0
+        r = F.scaled_dot_product_attention(q, k, v, dropout_p=attn_drop)
+        r = r.transpose(1, 2).reshape(N, m, H)
+        r = self.out_proj(r)
         x = x + r
+
+        # Pre-norm FFN
         x = x + self.ffn(self.norm2(x))
         return x.mean(dim=1)   # [N_total, H]
 
