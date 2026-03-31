@@ -1450,8 +1450,37 @@ class Experiment:
         epoch = state.get('epoch', 0)
         self.logger.info(f"Checkpoint loaded successfully (epoch {epoch})")
         return epoch
-    
-        return state
+    # (unreachable `return state` removed)
+
+    def eval_only(self, checkpoint_path: str) -> Dict[str, Any]:
+        """Load a checkpoint and evaluate on val + test (and train) splits.
+
+        Args:
+            checkpoint_path: Path to the .pt checkpoint file.
+
+        Returns:
+            Dict with keys 'val_metric', 'test_metric', 'train_metric' (and matching _loss keys).
+        """
+        epoch = self.load_checkpoint(checkpoint_path, load_optimizer=False)
+        self.logger.info(f"=" * 60)
+        self.logger.info(f"Evaluating checkpoint (epoch {epoch})")
+        self.logger.info(f"=" * 60)
+
+        results = {}
+        for split in ('val', 'test', 'train'):
+            loader = {'val': self.val_loader, 'test': self.test_loader, 'train': self.train_loader}[split]
+            if loader is None:
+                self.logger.info(f"  {split}: no loader — skipping")
+                continue
+            metrics = self.evaluate(epoch=epoch, split=split)
+            loss   = metrics.get('loss', float('nan'))
+            metric = metrics.get('metric', float('nan'))
+            results[f'{split}_loss']   = loss
+            results[f'{split}_metric'] = metric
+            self.logger.info(f"  {split:5s}  loss={loss:.5f}  {self.cfg.train.metric}={metric:.5f}")
+
+        self.logger.info("=" * 60)
+        return results
 
     def _make_placeholders(self, G, m_per_graph, k):
         """Return placeholder sampler outputs for G graphs (all -1s / empty edges)."""
