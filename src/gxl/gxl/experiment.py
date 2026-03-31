@@ -349,9 +349,13 @@ class Experiment:
             self.logger.info("  ✓ AMP enabled")
 
         # optionally resume
+        self.start_epoch = 1
         if self.cfg.resume_from:
             self.logger.info(f"→ Resuming from checkpoint: {self.cfg.resume_from}")
-            self.load_checkpoint(self.cfg.resume_from)
+            resumed_epoch = self.load_checkpoint(self.cfg.resume_from)
+            self.start_epoch = resumed_epoch + 1
+            self.logger.info(f"→ Resuming training from epoch {self.start_epoch} "
+                             f"(total epochs: {self.cfg.train.epochs})")
 
         self.logger.info("=" * 60)
         self.logger.info("✓ Build complete - Ready to train!")
@@ -472,10 +476,11 @@ class Experiment:
     def train(self):
         """ Returns: `dict` with keys ['train_metric', 'test_metric', 'val_metric']
         """
-        self.logger.info("Starting training for %d epochs", self.cfg.train.epochs)
+        self.logger.info("Starting training from epoch %d to %d",
+                         self.start_epoch, self.cfg.train.epochs)
         val_ema_alpha = self.cfg.model_config.kwargs.get('val_ema_alpha', 0.0)
         self._ema_val = None  # reset at the start of each training run
-        for epoch in range(1, self.cfg.train.epochs + 1):
+        for epoch in range(self.start_epoch, self.cfg.train.epochs + 1):
             t0 = time.time()
             train_stats = self.train_one_epoch(epoch)
             val_stats = self.evaluate(epoch)
@@ -1441,9 +1446,10 @@ class Experiment:
     
         # Update best metric
         self.best_metric = state.get('best_metric', self.best_metric)
-    
+
         epoch = state.get('epoch', 0)
         self.logger.info(f"Checkpoint loaded successfully (epoch {epoch})")
+        return epoch
     
         return state
 
