@@ -28,13 +28,13 @@ Notes
 """
 
 from __future__ import annotations
-import os, sys, warnings
+import os, sys, warnings, signal
 from pathlib import Path
 import time
 import json
 import logging
-from typing import Any, Dict, Optional, Literal 
-import random 
+from typing import Any, Dict, Optional, Literal
+import random
 import numpy as np
 
 import torch
@@ -178,6 +178,10 @@ class Experiment:
             import graphlet_sampler
             self.sampler = graphlet_sampler.sample_batch
             self.logger.info(f"Using Graphlet sampler")
+        elif sampler_name == 'rw':
+            from gxl.rw_sampler import sample_batch as _rw_sample_batch
+            self.sampler = _rw_sample_batch
+            self.logger.info("Using Random Walk sampler")
         else:
             raise ValueError(f"Unknown sampler: {sampler_name}")
 
@@ -379,9 +383,24 @@ class Experiment:
         if s.type == 'step':
             sch = optim.lr_scheduler.StepLR(self.optimizer, step_size=s.step_size, gamma=s.gamma)
         elif s.type == 'cosine':
-            sch = optim.lr_scheduler.CosineAnnealingLR(self.optimizer, T_max=self.cfg.train.epochs)
+            eta_min = getattr(s, 'eta_min', 1e-6)
+            sch = optim.lr_scheduler.CosineAnnealingLR(
+                self.optimizer, T_max=self.cfg.train.epochs, eta_min=eta_min)
+        elif s.type == 'cosine_warmup':
+            eta_min    = getattr(s, 'eta_min', 1e-6)
+            warmup     = getattr(s, 'warmup_epochs', max(1, self.cfg.train.epochs // 20))
+            total      = self.cfg.train.epochs
+            base_lr    = self.cfg.train.lr
+            def lr_lambda(epoch):
+                if epoch < warmup:
+                    return (epoch + 1) / warmup
+                progress = (epoch - warmup) / max(1, total - warmup)
+                return eta_min / base_lr + 0.5 * (1 - eta_min / base_lr) * (1 + torch.cos(torch.tensor(3.14159265 * progress)).item())
+            sch = optim.lr_scheduler.LambdaLR(self.optimizer, lr_lambda)
         elif s.type == 'reduce_on_plateau':
-            sch = optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, patience=s.patience)
+            factor  = getattr(s, 'factor', 0.5)
+            sch = optim.lr_scheduler.ReduceLROnPlateau(
+                self.optimizer, patience=s.patience, factor=factor)
         else:
             self.logger.warning("Unknown scheduler type: %s", s.type)
         return sch
@@ -480,44 +499,114 @@ class Experiment:
                          self.start_epoch, self.cfg.train.epochs)
         val_ema_alpha = self.cfg.model_config.kwargs.get('val_ema_alpha', 0.0)
         self._ema_val = None  # reset at the start of each training run
-        for epoch in range(self.start_epoch, self.cfg.train.epochs + 1):
-            t0 = time.time()
-            train_stats = self.train_one_epoch(epoch)
-            val_stats = self.evaluate(epoch)
 
-            # logging
-            self.history['train_loss'].append(train_stats.get('loss', None))
-            self.history['val_loss'].append(val_stats.get('loss', None))
+        # ── Graceful interrupt handling ────────────────────────────────────
+        self._interrupt_requested = False
+        _original_sigint = signal.getsignal(signal.SIGINT)
 
-            # scheduler step (handle reduce_on_plateau separately)
-            if self.scheduler is not None and not isinstance(self.scheduler, optim.lr_scheduler.ReduceLROnPlateau):
-                self.scheduler.step()
-            if isinstance(self.scheduler, optim.lr_scheduler.ReduceLROnPlateau):
-                metric_for_sched = val_stats.get('metric')
-                self.scheduler.step(metric_for_sched if metric_for_sched is not None else val_stats.get('loss'))
+        def _sigint_handler(sig, frame):
+            if not self._interrupt_requested:
+                # First Ctrl+C: set flag, let current epoch finish
+                self._interrupt_requested = True
+                print("\n\n  [Ctrl+C] Finishing current epoch then prompting..."
+                      "  (Press Ctrl+C again to force-quit now)\n")
+            else:
+                # Second Ctrl+C: immediate exit
+                print("\n  Force-quitting.\n")
+                signal.signal(signal.SIGINT, _original_sigint)
+                sys.exit(1)
 
-            # save checkpoint
-            if epoch % self.cfg.save_every == 0:
-                raw_metric = val_stats.get("metric")
-                if val_ema_alpha > 0.0 and raw_metric is not None:
-                    if self._ema_val is None:
-                        self._ema_val = raw_metric
+        signal.signal(signal.SIGINT, _sigint_handler)
+        # ──────────────────────────────────────────────────────────────────
+
+        val_stats  = {}
+        last_epoch = self.start_epoch - 1
+
+        try:
+            for epoch in range(self.start_epoch, self.cfg.train.epochs + 1):
+                last_epoch = epoch
+                t0 = time.time()
+                train_stats = self.train_one_epoch(epoch)
+                val_stats   = self.evaluate(epoch)
+
+                # logging
+                self.history['train_loss'].append(train_stats.get('loss', None))
+                self.history['val_loss'].append(val_stats.get('loss', None))
+
+                # scheduler step
+                if self.scheduler is not None and not isinstance(
+                        self.scheduler, optim.lr_scheduler.ReduceLROnPlateau):
+                    self.scheduler.step()
+                if isinstance(self.scheduler, optim.lr_scheduler.ReduceLROnPlateau):
+                    metric_for_sched = val_stats.get('metric')
+                    self.scheduler.step(
+                        metric_for_sched if metric_for_sched is not None
+                        else val_stats.get('loss'))
+
+                # periodic checkpoint
+                if epoch % self.cfg.save_every == 0:
+                    raw_metric = val_stats.get("metric")
+                    if val_ema_alpha > 0.0 and raw_metric is not None:
+                        if self._ema_val is None:
+                            self._ema_val = raw_metric
+                        else:
+                            self._ema_val = (val_ema_alpha * self._ema_val
+                                             + (1 - val_ema_alpha) * raw_metric)
+                        metric_for_save = self._ema_val
                     else:
-                        self._ema_val = val_ema_alpha * self._ema_val + (1 - val_ema_alpha) * raw_metric
-                    metric_for_save = self._ema_val
-                else:
-                    metric_for_save = raw_metric
-                self.save_checkpoint(epoch, metric_for_save)
+                        metric_for_save = raw_metric
+                    self.save_checkpoint(epoch, metric_for_save)
 
-            dt = time.time() - t0
-            ema_str = f" | val_ema {self._ema_val:.5f}" if self._ema_val is not None else ""
-            self.logger.info("Epoch %03d | time %.1fs | train_loss %.4f | val_loss %.4f | val_metric %.5f%s\n",
-                              epoch, dt, train_stats.get('loss', float('nan')), val_stats.get('loss', float('nan')),
-                              float(val_stats.get('metric', None)), ema_str)
+                dt = time.time() - t0
+                ema_str = (f" | val_ema {self._ema_val:.5f}"
+                           if self._ema_val is not None else "")
+                self.logger.info(
+                    "Epoch %03d | time %.1fs | train_loss %.4f"
+                    " | val_loss %.4f | val_metric %.5f%s\n",
+                    epoch, dt,
+                    train_stats.get('loss', float('nan')),
+                    val_stats.get('loss', float('nan')),
+                    float(val_stats.get('metric', float('nan'))),
+                    ema_str)
 
-        fname_best_model = f"best_model.pth"
-        path_best_model = os.path.join(self.cfg.checkpoint_dir, fname_best_model)
-        self.load_checkpoint(path_best_model)
+                # ── Check for interrupt at safe epoch boundary ─────────────
+                if self._interrupt_requested:
+                    self._interrupt_requested = False
+                    print("\n" + "=" * 60)
+                    print(f"  Training interrupted at epoch {epoch}.")
+                    print("  [1]  Quit immediately  (no save)")
+                    print("  [2]  Save checkpoint + evaluate best model then quit")
+                    print("=" * 60)
+                    try:
+                        choice = input("  Choice (1 / 2, default = 2): ").strip() or "2"
+                    except (KeyboardInterrupt, EOFError):
+                        choice = "1"
+
+                    if choice == "2":
+                        # Save the current epoch as an interrupt checkpoint
+                        interrupt_path = os.path.join(
+                            self.cfg.checkpoint_dir, f"interrupted_epoch_{epoch}.pth")
+                        self.save_checkpoint(epoch, val_stats.get("metric"),
+                                             path=interrupt_path)
+                        self.logger.info(
+                            "Interrupt checkpoint saved: %s", interrupt_path)
+                        break  # fall through to final evaluation below
+                    else:
+                        print("  Quitting immediately.")
+                        sys.exit(0)
+                # ──────────────────────────────────────────────────────────
+
+        finally:
+            signal.signal(signal.SIGINT, _original_sigint)
+
+        # ── Final evaluation on best saved checkpoint ──────────────────────
+        fname_best_model = "best_model.pth"
+        path_best_model  = os.path.join(self.cfg.checkpoint_dir, fname_best_model)
+        if os.path.exists(path_best_model):
+            self.load_checkpoint(path_best_model)
+        else:
+            self.logger.warning("best_model.pth not found — evaluating current weights")
+
         test_best_stats  = self.evaluate(split='test')
         train_best_stats = self.evaluate(split='train')
         val_best_stats   = self.evaluate(split='val')
@@ -526,12 +615,19 @@ class Experiment:
         train_metric = train_best_stats.get('metric', None)
         val_metric   = val_best_stats.get('metric', None)
 
-        result_out = {
-            "train_metric" : train_metric,
-            "test_metric" : test_metric,
-            "val_metric" : val_metric
+        self.logger.info(
+            "Final results (best checkpoint):\n"
+            "  Train %s: %.5f\n  Val   %s: %.5f\n  Test  %s: %.5f",
+            self.cfg.train.metric, train_metric,
+            self.cfg.train.metric, val_metric,
+            self.cfg.train.metric, test_metric,
+        )
+
+        return {
+            "train_metric": train_metric,
+            "test_metric":  test_metric,
+            "val_metric":   val_metric,
         }
-        return result_out
 
     def train_one_epoch(self, epoch: int) -> Dict[str, float]:
         """Default training loop. Override for custom tasks.
@@ -1210,38 +1306,39 @@ class Experiment:
             raise
 
 
-    def save_checkpoint(self, epoch: int, metric: Optional[float] = None):
+    def save_checkpoint(self, epoch: int, metric: Optional[float] = None,
+                        path: Optional[str] = None):
         """Save model checkpoint and optionally update best model.
-    
+
         Args:
-            epoch: Current training epoch
-            metric: Validation metric value for this epoch
+            epoch:  Current training epoch.
+            metric: Validation metric value for this epoch.
+            path:   If given, save ONLY to this explicit path (no best-model
+                    logic, no cleanup).  Used for interrupt checkpoints.
         """
-        # Create checkpoint directory if it doesn't exist
         checkpoint_dir = Path(self.cfg.checkpoint_dir)
         checkpoint_dir.mkdir(parents=True, exist_ok=True)
-    
-        # Determine if this is the best model
+
+        state = self._create_checkpoint_state(epoch, metric)
+
+        # Explicit path requested (e.g. interrupt checkpoint) — save and return
+        if path is not None:
+            self._save_state(state, Path(path))
+            return
+
+        # Normal periodic save
         is_best = self._is_best_metric(metric)
-    
-        # Update best metric if needed
         if is_best:
             self.best_metric = metric
             self.logger.info(f"New best model! Metric: {metric:.4f}")
-    
-        # Prepare checkpoint state
-        state = self._create_checkpoint_state(epoch, metric)
-    
-        # Save regular checkpoint
+
         checkpoint_path = checkpoint_dir / f"{self.cfg.name}_epoch{epoch:03d}.pth"
         self._save_state(state, checkpoint_path)
-    
-        # Save best model if applicable
+
         if is_best:
             best_path = checkpoint_dir / "best_model.pth"
             self._save_state(state, best_path)
-    
-        # Clean up old checkpoints
+
         self._cleanup_old_checkpoints(checkpoint_dir)
 
 
