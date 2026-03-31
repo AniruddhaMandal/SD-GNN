@@ -30,6 +30,7 @@ def _default_device() -> str:
 class SubgraphParam:
     k: int = None
     m: int = None
+    m_eval: Optional[int] = None
     pooling: Optional[PoolingType] = None
 
 @dataclass
