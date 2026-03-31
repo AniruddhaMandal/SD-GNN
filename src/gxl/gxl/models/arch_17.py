@@ -349,7 +349,8 @@ def build_arch17(cfg: ExperimentConfig):
     if cfg.task in ('Node-Classification', 'Link-Prediction'):
         raise NotImplementedError("ARCH-17 is graph-level only.")
 
-    k_max = cfg.model_config.subgraph_param.get('k', 10)
+    sp = cfg.model_config.subgraph_param
+    k_max = sp.k if hasattr(sp, 'k') else (sp.get('k', 10) if hasattr(sp, 'get') else 10)
 
     return Arch17GraphEncoder(
         in_channels        = cfg.model_config.node_feature_dim,
