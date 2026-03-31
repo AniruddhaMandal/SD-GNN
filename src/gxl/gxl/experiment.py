@@ -987,8 +987,11 @@ class Experiment:
                 "Please set cfg.model_config.subgraph_param with 'k' and 'm' values."
             )
 
-        k = self.cfg.model_config.subgraph_param.k
-        m = self.cfg.model_config.subgraph_param.m
+        k  = self.cfg.model_config.subgraph_param.k
+        m  = self.cfg.model_config.subgraph_param.m
+        # Use m_eval during evaluation if configured (e.g. train m=32, eval m=128)
+        if not self.model.training:
+            m = getattr(self.cfg.model_config.subgraph_param, 'm_eval', m)
 
         # Check if we can use presample cache
         if self.presample_cache is not None and batch.graph_idx is not None:
