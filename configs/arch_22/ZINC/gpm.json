@@ -1,0 +1,53 @@
+{
+  "dataset_name": "ZINC",
+  "model_name": "ARCH-22",
+  "task": "Regression",
+
+  "model_config": {
+    "mpnn_type": "gine",
+    "node_feature_dim": 21,
+    "edge_feature_dim": 3,
+    "hidden_dim": 256,
+    "mpnn_layers": 0,
+    "dropout": 0.1,
+    "out_dim": 1,
+    "pooling": "mean",
+    "subgraph_sampling": true,
+    "subgraph_param": { "k": 9, "m": 16, "m_eval": 128 },
+    "kwargs": {
+      "node_pe_dim":   8,
+      "atom_emb_dim":  16,
+      "bond_emb_dim":  16,
+      "intra_layers":  1,
+      "inter_layers":  1,
+      "intra_heads":   1,
+      "inter_heads":   4,
+      "multiscale":    [2, 4, 6, 8],
+      "pe_weight":     1.0
+    }
+  },
+
+  "train": {
+    "epochs":           1000,
+    "train_batch_size": 1024,
+    "val_batch_size":   1024,
+    "lr":               0.01,
+    "weight_decay":     0.0,
+    "optimizer":        "adam",
+    "scheduler": {
+      "type":           "cosine_warmup",
+      "warmup_epochs":  10,
+      "eta_min":        1e-6
+    },
+    "loss_fn":    "L1Loss",
+    "metric":     "MAE",
+    "grad_clip":  1.0
+  },
+
+  "device":       "cuda",
+  "seed":         42,
+  "num_workers":  4,
+  "save_every":   10,
+  "keep_last_k":  3,
+  "sampler":      "rw"
+}

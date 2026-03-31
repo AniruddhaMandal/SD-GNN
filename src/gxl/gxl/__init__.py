@@ -37,8 +37,11 @@ class SubgraphParam:
 class SchedulerCfg:
     type: Optional[str] = None
     setp_size: Optional[int] = None
+    step_size: Optional[int] = None
     gamma: Optional[float] = None
     patience: Optional[int] = None
+    warmup_epochs: Optional[int] = None
+    eta_min: Optional[float] = None
 
 @dataclass
 class ModelConfig:
