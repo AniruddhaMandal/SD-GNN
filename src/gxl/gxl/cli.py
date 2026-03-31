@@ -102,6 +102,12 @@ def main(argv: List[str] | None = None) -> None:
                         type=str,
                         default=None,
                         help='Override experiment name (default: auto-generated from model/dataset/conv)')
+    parser.add_argument('--eval', '-e',
+                        type=str,
+                        default=None,
+                        metavar='CHECKPOINT',
+                        help='Evaluate a checkpoint without training. '
+                             'Pass the path to a .pt checkpoint file.')
     args = parser.parse_args(argv)
 
     cfg_path = _resolve_config_path(args.config)
@@ -130,6 +136,29 @@ def main(argv: List[str] | None = None) -> None:
     # Set presample flag from CLI
     if args.presample:
         exp_config.presample = True
+
+    if args.eval:
+        # ── Eval-only mode ────────────────────────────────────────────────────
+        checkpoint_path = args.eval
+        print(f"Eval-only mode: loading checkpoint from '{checkpoint_path}'")
+        experiment = Experiment(exp_config)
+        result = experiment.eval_only(checkpoint_path)
+        out_str = (
+            f"Eval result (checkpoint: {checkpoint_path}):\n"
+            + "\n".join(
+                f"  {split:5s}: {exp_config.train.metric}={result[f'{split}_metric']:.5f}  "
+                f"loss={result[f'{split}_loss']:.5f}"
+                for split in ('val', 'test', 'train')
+                if f'{split}_metric' in result
+            )
+        )
+        print(out_str)
+        os.makedirs(temp_run_dir, exist_ok=True)
+        with open(os.path.join(temp_run_dir, "eval_result.txt"), 'w') as f:
+            f.write(out_str)
+        shutil.move(temp_run_dir, run_dir)
+        print(f"\nResults saved to: {run_dir}/")
+        return
 
     if args.multi_seed:
         print(f"Running experiment with multiple seeds: {args.seeds}")
