@@ -1087,7 +1087,9 @@ class Experiment:
         m  = self.cfg.model_config.subgraph_param.m
         # Use m_eval during evaluation if configured (e.g. train m=32, eval m=128)
         if not self.model.training:
-            m = getattr(self.cfg.model_config.subgraph_param, 'm_eval', m)
+            m_eval = getattr(self.cfg.model_config.subgraph_param, 'm_eval', None)
+            if m_eval is not None:
+                m = m_eval
 
         # Check if we can use presample cache
         if self.presample_cache is not None and batch.graph_idx is not None:
