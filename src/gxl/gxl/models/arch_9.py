@@ -88,13 +88,15 @@ class Arch9Layer(nn.Module):
 
     def __init__(
         self,
-        hidden_dim: int,
-        edge_dim:   int,
-        mlp_layers: int   = 2,
-        dropout:    float = 0.0,
+        hidden_dim:      int,
+        edge_dim:        int,
+        mlp_layers:      int   = 2,
+        dropout:         float = 0.0,
+        use_inter_conv:  bool  = True,
     ):
         super().__init__()
-        self.dropout = dropout
+        self.dropout        = dropout
+        self.use_inter_conv = use_inter_conv
 
         # Shared intra-subgraph GINE (used by both root and non-root)
         self.intra_conv = _make_gine(hidden_dim, edge_dim, mlp_layers)
@@ -154,9 +156,13 @@ class Arch9Layer(nn.Module):
             dim=0, reduce='mean', dim_size=N_total,
         )   # [N_total, H] — nodes with no valid root get zeros
 
-        h_inter      = self.inter_conv(h_root_canonical, edge_index, edge_attr)
-        h_inter      = self.inter_bn(h_inter)              # [N_total, H]
-        h_inter_bcast = h_inter[clamped_ids] * valid_f    # [S*k, H]
+        if self.use_inter_conv:
+            h_inter       = self.inter_conv(h_root_canonical, edge_index, edge_attr)
+            h_inter       = self.inter_bn(h_inter)             # [N_total, H]
+            h_inter_bcast = h_inter[clamped_ids] * valid_f    # [S*k, H]
+        else:
+            # Ablation: roots get only intra-subgraph update (no cross-subgraph MP)
+            h_inter_bcast = torch.zeros_like(h1)
 
         # ── role-differentiated combine ───────────────────────────────────────
         # root:     ReLU(h1  +  h_inter_bcast)

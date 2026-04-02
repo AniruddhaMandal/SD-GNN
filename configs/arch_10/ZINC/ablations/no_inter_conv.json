@@ -16,7 +16,8 @@
     "subgraph_param": { "k": 10, "m": 32, "m_eval": 32, "pooling": "mean" },
     "kwargs": {
       "mlp_layers": 2,
-      "num_heads": 4
+      "num_heads": 4,
+      "use_inter_conv": false
     }
   },
 

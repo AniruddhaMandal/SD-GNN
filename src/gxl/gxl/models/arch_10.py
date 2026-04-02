@@ -93,15 +93,22 @@ class Arch10GraphEncoder(nn.Module):
 
     def __init__(
         self,
-        in_channels: int,
-        hidden_dim:  int,
-        edge_dim:    int,
-        num_layers:  int   = 6,
-        mlp_layers:  int   = 2,
-        dropout:     float = 0.0,
-        num_heads:   int   = 4,
+        in_channels:    int,
+        hidden_dim:     int,
+        edge_dim:       int,
+        num_layers:     int   = 6,
+        mlp_layers:     int   = 2,
+        dropout:        float = 0.0,
+        num_heads:      int   = 4,
+        use_inter_conv: bool  = True,
+        use_pe:         bool  = True,
+        use_logp_pe:    bool  = True,
+        use_attn:       bool  = True,
     ):
         super().__init__()
+        self.use_pe      = use_pe
+        self.use_logp_pe = use_logp_pe
+        self.use_attn    = use_attn
 
         self.atom_encoder = nn.Embedding(in_channels, hidden_dim)
         self.bond_encoder = nn.Embedding(edge_dim,    hidden_dim)
@@ -109,7 +116,8 @@ class Arch10GraphEncoder(nn.Module):
         self.logp_proj    = nn.Sequential(nn.Linear(1, hidden_dim), nn.ReLU())
 
         self.layers = nn.ModuleList([
-            Arch9Layer(hidden_dim, hidden_dim, mlp_layers, dropout)
+            Arch9Layer(hidden_dim, hidden_dim, mlp_layers, dropout,
+                       use_inter_conv=use_inter_conv)
             for _ in range(num_layers)
         ])
 
@@ -145,8 +153,9 @@ class Arch10GraphEncoder(nn.Module):
 
         # ── initialise flat representations ───────────────────────────────────
         dist    = _bfs_distances(intra_ei, S, k).clamp(max=self.MAX_DIST)
-        dist_pe = self.dist_encoder(dist)                          # [S*k, H]
-        logp_pe = self.logp_proj(lp[sub_batch].unsqueeze(-1))     # [S*k, H]
+        dist_pe = self.dist_encoder(dist) if self.use_pe else torch.zeros_like(x_flat)
+        logp_pe = self.logp_proj(lp[sub_batch].unsqueeze(-1)) if self.use_logp_pe \
+                  else torch.zeros_like(x_flat)
 
         valid_f = valid.float().unsqueeze(-1)
         h_flat  = (x_flat + dist_pe + logp_pe) * valid_f
@@ -172,18 +181,20 @@ class Arch10GraphEncoder(nn.Module):
         # (graphlet_sampler.cpp Phase 1b), so direct view is correct.
         h_sub_2d = h_sub.view(N_total, m, h_sub.shape[-1])       # [N_total, m, H]
 
-        # Step 3: HT-corrected self-attention.
-        # attn_mask adds  -α · logP[k]  to every pre-softmax score for key k,
-        # so attention[q,k] ∝ exp(Q·K/sqrt(d)) / p[k]^α.
-        # Rare subgraphs (low p, large −logP) receive more attention weight.
-        attn_mask = _ht_attn_bias(lp, m, N_total, self.ht_alpha, self.num_heads)
-        h_attn, _ = self.readout_mha(
-            h_sub_2d, h_sub_2d, h_sub_2d, attn_mask=attn_mask,
-        )
-        h_attn = h_attn + h_sub_2d                               # residual
+        # Step 3: aggregate m subgraph reps → per-node embedding
+        if self.use_attn:
+            # HT-corrected self-attention over m subgraph reps
+            attn_mask = _ht_attn_bias(lp, m, N_total, self.ht_alpha, self.num_heads)
+            h_attn, _ = self.readout_mha(
+                h_sub_2d, h_sub_2d, h_sub_2d, attn_mask=attn_mask,
+            )
+            h_agg = h_attn + h_sub_2d                            # residual
+        else:
+            # Ablation: plain mean-pool over m subgraphs (no attention, no HT)
+            h_agg = h_sub_2d
 
         # Step 4: mean → BN → sum-pool per graph
-        node_emb = self.readout_norm(h_attn.mean(dim=1))         # [N_total, H]
+        node_emb = self.readout_norm(h_agg.mean(dim=1))          # [N_total, H]
         return global_add_pool(node_emb, sf.batch)                # [B, H]
 
 
@@ -198,22 +209,29 @@ class Arch10NodeEncoder(nn.Module):
 
     def __init__(
         self,
-        in_channels: int,
-        hidden_dim:  int,
-        edge_dim:    int,
-        num_layers:  int   = 6,
-        mlp_layers:  int   = 2,
-        dropout:     float = 0.0,
-        num_heads:   int   = 4,
+        in_channels:    int,
+        hidden_dim:     int,
+        edge_dim:       int,
+        num_layers:     int   = 6,
+        mlp_layers:     int   = 2,
+        dropout:        float = 0.0,
+        num_heads:      int   = 4,
+        use_inter_conv: bool  = True,
+        use_pe:         bool  = True,
+        use_logp_pe:    bool  = True,
     ):
         super().__init__()
+        self.use_pe      = use_pe
+        self.use_logp_pe = use_logp_pe
+
         self.atom_encoder = nn.Embedding(in_channels, hidden_dim)
         self.bond_encoder = nn.Embedding(edge_dim,    hidden_dim)
         self.dist_encoder = nn.Embedding(self.MAX_DIST + 1, hidden_dim)
         self.logp_proj    = nn.Sequential(nn.Linear(1, hidden_dim), nn.ReLU())
 
         self.layers = nn.ModuleList([
-            Arch9Layer(hidden_dim, hidden_dim, mlp_layers, dropout)
+            Arch9Layer(hidden_dim, hidden_dim, mlp_layers, dropout,
+                       use_inter_conv=use_inter_conv)
             for _ in range(num_layers)
         ])
 
@@ -245,8 +263,9 @@ class Arch10NodeEncoder(nn.Module):
             lp = torch.zeros(S, device=device)
 
         dist    = _bfs_distances(intra_ei, S, k).clamp(max=self.MAX_DIST)
-        dist_pe = self.dist_encoder(dist)
-        logp_pe = self.logp_proj(lp[sub_batch].unsqueeze(-1))
+        dist_pe = self.dist_encoder(dist) if self.use_pe else torch.zeros_like(x_flat)
+        logp_pe = self.logp_proj(lp[sub_batch].unsqueeze(-1)) if self.use_logp_pe \
+                  else torch.zeros_like(x_flat)
 
         valid_f = valid.float().unsqueeze(-1)
         h_flat  = (x_flat + dist_pe + logp_pe) * valid_f
@@ -264,14 +283,17 @@ class Arch10NodeEncoder(nn.Module):
             dim=0, reduce='sum', dim_size=S,
         )
 
-        h_sub_2d  = h_sub.view(N_total, m, h_sub.shape[-1])
-        attn_mask = _ht_attn_bias(lp, m, N_total, self.ht_alpha, self.num_heads)
-        h_attn, _ = self.readout_mha(
-            h_sub_2d, h_sub_2d, h_sub_2d, attn_mask=attn_mask,
-        )
-        h_attn = h_attn + h_sub_2d
+        h_sub_2d = h_sub.view(N_total, m, h_sub.shape[-1])
+        if self.use_attn:
+            attn_mask = _ht_attn_bias(lp, m, N_total, self.ht_alpha, self.num_heads)
+            h_attn, _ = self.readout_mha(
+                h_sub_2d, h_sub_2d, h_sub_2d, attn_mask=attn_mask,
+            )
+            h_agg = h_attn + h_sub_2d
+        else:
+            h_agg = h_sub_2d
 
-        return self.readout_norm(h_attn.mean(dim=1))              # [N_total, H]
+        return self.readout_norm(h_agg.mean(dim=1))               # [N_total, H]
 
 
 # ---------------------------------------------------------------------------
@@ -284,13 +306,17 @@ def build_arch10(cfg: ExperimentConfig):
     is_node_level = cfg.task in ('Node-Classification', 'Link-Prediction')
 
     common = dict(
-        in_channels = cfg.model_config.node_feature_dim,
-        edge_dim    = cfg.model_config.edge_feature_dim,
-        hidden_dim  = cfg.model_config.hidden_dim,
-        num_layers  = cfg.model_config.mpnn_layers,
-        mlp_layers  = kw.get('mlp_layers', 2),
-        dropout     = cfg.model_config.dropout,
-        num_heads   = kw.get('num_heads', 4),
+        in_channels    = cfg.model_config.node_feature_dim,
+        edge_dim       = cfg.model_config.edge_feature_dim,
+        hidden_dim     = cfg.model_config.hidden_dim,
+        num_layers     = cfg.model_config.mpnn_layers,
+        mlp_layers     = kw.get('mlp_layers',     2),
+        dropout        = cfg.model_config.dropout,
+        num_heads      = kw.get('num_heads',       4),
+        use_inter_conv = kw.get('use_inter_conv',  True),
+        use_pe         = kw.get('use_pe',          True),
+        use_logp_pe    = kw.get('use_logp_pe',     True),
+        use_attn       = kw.get('use_attn',        True),
     )
 
     if is_node_level:

@@ -7,13 +7,13 @@
     "mpnn_type": "gine",
     "node_feature_dim": 21,
     "edge_feature_dim": 3,
-    "hidden_dim": 64,
+    "hidden_dim": 128,
     "mpnn_layers": 6,
     "dropout": 0.0,
     "out_dim": 1,
     "pooling": "sum",
     "subgraph_sampling": true,
-    "subgraph_param": { "k": 10, "m": 32, "m_eval": 32, "pooling": "mean" },
+    "subgraph_param": { "k": 10, "m": 32, "m_eval": 64 },
     "kwargs": {
       "mlp_layers": 2,
       "num_heads": 4
