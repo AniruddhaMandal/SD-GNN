@@ -184,6 +184,7 @@ class Arch24GraphEncoder(nn.Module):
         super().__init__()
         self.use_ht_pool  = use_ht_pool
         self.use_ht_inter = use_ht_inter
+        self.hidden_dim   = hidden_dim
 
         self.atom_encoder = nn.Embedding(in_channels, hidden_dim)
         self.bond_encoder = nn.Embedding(edge_dim,    hidden_dim)
@@ -213,10 +214,17 @@ class Arch24GraphEncoder(nn.Module):
 
     def forward(self, sf: SubgraphFeaturesBatch) -> torch.Tensor:
         # ── embed ─────────────────────────────────────────────────────────────
-        if not sf.x.is_floating_point():
-            sf.x = self.atom_encoder(sf.x.long().squeeze(-1))
-        if sf.edge_attr is not None and not sf.edge_attr.is_floating_point():
-            sf.edge_attr = self.bond_encoder(sf.edge_attr.long().squeeze(-1) - 1)
+        # Defensive: encode if not already a 2D [N, H] float tensor
+        if (not sf.x.is_floating_point()
+                or sf.x.dim() < 2
+                or sf.x.shape[-1] != self.hidden_dim):
+            sf.x = self.atom_encoder(sf.x.long().view(-1))
+        if sf.edge_attr is not None and (
+            not sf.edge_attr.is_floating_point()
+            or sf.edge_attr.dim() < 2
+            or sf.edge_attr.shape[-1] != self.hidden_dim
+        ):
+            sf.edge_attr = self.bond_encoder(sf.edge_attr.long().view(-1) - 1)
 
         x_flat, ea_flat, intra_ei, sub_batch, node_ids, valid, N_total = \
             _flatten_subgraphs(sf)
