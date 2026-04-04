@@ -34,7 +34,7 @@ Requirements:
 import torch
 from torch import nn
 from torch.nn import functional as F
-from torch_geometric.nn import GINEConv, global_add_pool
+from torch_geometric.nn import GINEConv, global_add_pool, global_mean_pool
 from torch_geometric.nn.norm import BatchNorm
 from torch_geometric.utils import scatter
 
@@ -104,11 +104,13 @@ class Arch10GraphEncoder(nn.Module):
         use_pe:         bool  = True,
         use_logp_pe:    bool  = True,
         use_attn:       bool  = True,
+        use_mean_pool:  bool  = False,
     ):
         super().__init__()
-        self.use_pe      = use_pe
-        self.use_logp_pe = use_logp_pe
-        self.use_attn    = use_attn
+        self.use_pe        = use_pe
+        self.use_logp_pe   = use_logp_pe
+        self.use_attn      = use_attn
+        self.use_mean_pool = use_mean_pool
 
         self.atom_encoder = nn.Embedding(in_channels, hidden_dim)
         self.bond_encoder = nn.Embedding(edge_dim,    hidden_dim)
@@ -197,7 +199,8 @@ class Arch10GraphEncoder(nn.Module):
 
         # Step 4: mean → BN → sum-pool per graph
         node_emb = self.readout_norm(h_agg.mean(dim=1))          # [N_total, H]
-        return global_add_pool(node_emb, sf.batch)                # [B, H]
+        pool = global_mean_pool if self.use_mean_pool else global_add_pool
+        return pool(node_emb, sf.batch)                           # [B, H]
 
 
 # ---------------------------------------------------------------------------
@@ -321,6 +324,7 @@ def build_arch10(cfg: ExperimentConfig):
         use_pe         = kw.get('use_pe',          True),
         use_logp_pe    = kw.get('use_logp_pe',     True),
         use_attn       = kw.get('use_attn',        True),
+        use_mean_pool  = (getattr(cfg.model_config, 'pooling', 'sum') == 'mean'),
     )
 
     if is_node_level:

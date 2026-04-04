@@ -40,7 +40,76 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from collections import defaultdict
 from tqdm.auto import tqdm
+
+
+# ---------------------------------------------------------------------------
+# ASAM optimizer (Adaptive Sharpness-Aware Minimisation)
+# Kwon et al. 2021 — https://arxiv.org/abs/2102.11600
+# Ported from Subgraphormer (utils/training.py)
+# ---------------------------------------------------------------------------
+
+class ASAM:
+    """Wraps a base optimizer with adaptive sharpness-aware minimisation.
+
+    Each training step requires two forward-backward passes:
+      1. loss.backward() → asam.ascent_step()   (perturb weights)
+      2. loss.backward() → asam.descent_step()  (restore + update)
+
+    Args:
+        optimizer: base optimizer (e.g. Adam/SGD).
+        model:     the nn.Module being trained.
+        rho:       neighbourhood radius (default 0.5).
+        eta:       adaptive scale floor (default 0.01).
+    """
+
+    def __init__(self, optimizer, model, rho: float = 0.5, eta: float = 0.01):
+        self.optimizer = optimizer
+        self.model = model
+        self.rho = rho
+        self.eta = eta
+        self.state = defaultdict(dict)
+
+    @torch.no_grad()
+    def ascent_step(self):
+        wgrads = []
+        for n, p in self.model.named_parameters():
+            if p.grad is None:
+                continue
+            t_w = self.state[p].get("eps")
+            if t_w is None:
+                t_w = torch.clone(p).detach()
+                self.state[p]["eps"] = t_w
+            if 'weight' in n:
+                t_w[...] = p[...]
+                t_w.abs_().add_(self.eta)
+                p.grad.mul_(t_w)
+            wgrads.append(torch.norm(p.grad, p=2))
+        wgrad_norm = torch.norm(torch.stack(wgrads), p=2) + 1e-16
+        for n, p in self.model.named_parameters():
+            if p.grad is None:
+                continue
+            t_w = self.state[p].get("eps")
+            if 'weight' in n:
+                p.grad.mul_(t_w)
+            eps = t_w
+            eps[...] = p.grad[...]
+            eps.mul_(self.rho / wgrad_norm)
+            p.add_(eps)
+        self.optimizer.zero_grad()
+
+    @torch.no_grad()
+    def descent_step(self):
+        for n, p in self.model.named_parameters():
+            if p.grad is None:
+                continue
+            p.sub_(self.state[p]["eps"])
+        self.optimizer.step()
+        self.optimizer.zero_grad()
+
+    def zero_grad(self):
+        self.optimizer.zero_grad()
 from . import ExperimentConfig
 from . import SubgraphFeaturesBatch
 from dataclasses import asdict
@@ -367,11 +436,17 @@ class Experiment:
 
     def _build_optimizer(self):
         params = [p for p in self.model.parameters() if p.requires_grad]
-        if self.cfg.train.optimizer.lower() in ('adam', 'adamw'):
-            opt_cls = optim.AdamW if self.cfg.train.optimizer.lower() == 'adamw' else optim.Adam
+        opt_name = self.cfg.train.optimizer.lower()
+        if opt_name in ('adam', 'adamw'):
+            opt_cls = optim.AdamW if opt_name == 'adamw' else optim.Adam
             return opt_cls(params, lr=self.cfg.train.lr, weight_decay=self.cfg.train.weight_decay)
-        elif self.cfg.train.optimizer.lower() == 'sgd':
+        elif opt_name == 'sgd':
             return optim.SGD(params, lr=self.cfg.train.lr, momentum=0.9, weight_decay=self.cfg.train.weight_decay)
+        elif opt_name == 'asam':
+            rho = getattr(self.cfg.train, 'asam_rho', 0.5)
+            base_opt = optim.Adam(params, lr=self.cfg.train.lr, weight_decay=self.cfg.train.weight_decay)
+            self._base_optimizer = base_opt   # keep ref for scheduler
+            return ASAM(base_opt, self.model, rho=rho)
         else:
             raise ValueError(f"Unknown optimizer: {self.cfg.train.optimizer}")
 
@@ -380,12 +455,14 @@ class Experiment:
         s = self.cfg.train.scheduler
         if not s:
             return None
+        # When using ASAM, schedule the inner (base) optimizer's lr
+        sched_opt = getattr(self, '_base_optimizer', self.optimizer)
         if s.type == 'step':
-            sch = optim.lr_scheduler.StepLR(self.optimizer, step_size=s.step_size, gamma=s.gamma)
+            sch = optim.lr_scheduler.StepLR(sched_opt, step_size=s.step_size, gamma=s.gamma)
         elif s.type == 'cosine':
             eta_min = getattr(s, 'eta_min', 1e-6)
             sch = optim.lr_scheduler.CosineAnnealingLR(
-                self.optimizer, T_max=self.cfg.train.epochs, eta_min=eta_min)
+                sched_opt, T_max=self.cfg.train.epochs, eta_min=eta_min)
         elif s.type == 'cosine_warmup':
             eta_min    = getattr(s, 'eta_min', 1e-6)
             warmup     = getattr(s, 'warmup_epochs', max(1, self.cfg.train.epochs // 20))
@@ -396,11 +473,11 @@ class Experiment:
                     return (epoch + 1) / warmup
                 progress = (epoch - warmup) / max(1, total - warmup)
                 return eta_min / base_lr + 0.5 * (1 - eta_min / base_lr) * (1 + torch.cos(torch.tensor(3.14159265 * progress)).item())
-            sch = optim.lr_scheduler.LambdaLR(self.optimizer, lr_lambda)
+            sch = optim.lr_scheduler.LambdaLR(sched_opt, lr_lambda)
         elif s.type == 'reduce_on_plateau':
             factor  = getattr(s, 'factor', 0.5)
             sch = optim.lr_scheduler.ReduceLROnPlateau(
-                self.optimizer, patience=s.patience, factor=factor)
+                sched_opt, patience=s.patience, factor=factor)
         else:
             self.logger.warning("Unknown scheduler type: %s", s.type)
         return sch
@@ -651,65 +728,68 @@ class Experiment:
             batch = batch.to(self.device)
             labels = labels.to(self.device)
 
-            self.optimizer.zero_grad()
-            with torch.amp.autocast('cuda', enabled=self.cfg.train.use_amp):
+            def _compute_loss(batch, labels):
                 output = self.model(batch)
-                #user-provided criterion must accept (outputs, labels)
                 if self.cfg.task == "Binary-Classification":
-                    # CrossEntropyLoss needs long targets, BCEWithLogitsLoss needs float
                     if isinstance(self.criterion, torch.nn.CrossEntropyLoss):
-                        loss = self.criterion(output, labels.long())
+                        return self.criterion(output, labels.long())
                     else:
-                        # BCEWithLogitsLoss needs float targets and matching shapes
                         if output.dim() > 1 and output.shape[-1] == 1:
-                            output = output.squeeze(-1)  # [B, 1] -> [B]
-                        loss = self.criterion(output, labels.float())
+                            output = output.squeeze(-1)
+                        return self.criterion(output, labels.float())
                 elif self.cfg.task == "Multi-Lable-Binary-Classification":
-                    loss = self.criterion(output, labels.float())
+                    return self.criterion(output, labels.float())
                 elif self.cfg.task == "Multi-Target-Regression":
-                    loss = self.criterion(output, labels.float())
+                    return self.criterion(output, labels.float())
                 elif self.cfg.task == "Multi-Class-Classification":
-                    loss = self.criterion(output, labels.long())
+                    return self.criterion(output, labels.long())
                 elif self.cfg.task == "Node-Classification":
-                    # Node-level classification: output is [num_nodes, num_classes], labels is [num_nodes]
-                    # Apply train_mask if available
                     if batch.train_mask is not None:
-                        train_mask = batch.train_mask
-                        loss = self.criterion(output[train_mask], labels[train_mask].long())
-                    else:
-                        loss = self.criterion(output, labels.long())
+                        return self.criterion(output[batch.train_mask], labels[batch.train_mask].long())
+                    return self.criterion(output, labels.long())
                 elif self.cfg.task == "Node-Multilabel-Classification":
-                    # Multi-label node classification (e.g. ogbn-proteins): labels are [N, C] float
                     if batch.train_mask is not None:
-                        train_mask = batch.train_mask
-                        loss = self.criterion(output[train_mask], labels[train_mask].float())
-                    else:
-                        loss = self.criterion(output, labels.float())
+                        return self.criterion(output[batch.train_mask], labels[batch.train_mask].float())
+                    return self.criterion(output, labels.float())
                 elif self.cfg.task == "Link-Prediction":
-                    loss = self.criterion(output, labels)
+                    return self.criterion(output, labels)
                 elif self.cfg.task == "Regression":
-                    loss = self.criterion(output, labels.unsqueeze(-1))
+                    return self.criterion(output, labels.unsqueeze(-1))
                 elif self.cfg.task == "Single-Target-Regression":
-                    loss = self.criterion(output, labels.float())
-
+                    return self.criterion(output, labels.float())
                 else:
                     raise ValueError(f"unknown task: {self.cfg.task}")
 
+            if isinstance(self.optimizer, ASAM):
+                # ASAM: two forward-backward passes (no AMP — incompatible with weight perturbation)
+                self.optimizer.zero_grad()
+                loss = _compute_loss(batch, labels)
+                loss.backward()
+                self.optimizer.ascent_step()
 
-            # backward
-            if self.cfg.train.use_amp:
-                assert self.scaler is not None
-                self.scaler.scale(loss).backward()
-                if self.cfg.train.grad_clip:
-                    self.scaler.unscale_(self.optimizer)
-                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.cfg.train.grad_clip)
-                self.scaler.step(self.optimizer)
-                self.scaler.update()
-            else:
+                loss = _compute_loss(batch, labels)
                 loss.backward()
                 if self.cfg.train.grad_clip:
                     torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.cfg.train.grad_clip)
-                self.optimizer.step()
+                self.optimizer.descent_step()
+            else:
+                self.optimizer.zero_grad()
+                with torch.amp.autocast('cuda', enabled=self.cfg.train.use_amp):
+                    loss = _compute_loss(batch, labels)
+
+                if self.cfg.train.use_amp:
+                    assert self.scaler is not None
+                    self.scaler.scale(loss).backward()
+                    if self.cfg.train.grad_clip:
+                        self.scaler.unscale_(self.optimizer)
+                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.cfg.train.grad_clip)
+                    self.scaler.step(self.optimizer)
+                    self.scaler.update()
+                else:
+                    loss.backward()
+                    if self.cfg.train.grad_clip:
+                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.cfg.train.grad_clip)
+                    self.optimizer.step()
 
             # bookkeeping
             batch_size = self._get_batch_size(batch)

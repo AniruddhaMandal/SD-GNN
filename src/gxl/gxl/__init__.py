@@ -12,7 +12,7 @@ import wandb
 
 # ----- Type aliases -----
 PoolingType = Literal["mean", "max", "add", "sum", "off"]
-OptimizerType = Literal["adam", "adamw", "sgd"]
+OptimizerType = Literal["adam", "adamw", "sgd", "asam"]
 MpnnType = Literal["gcn", "gin", "graphsage", "gine", "sage", "gat", "gatv2", "sgc", "gcnii", "pna", "jknet"]
 
 ModelFactory = Callable[["ExperimentConfig"], nn.Module]
@@ -68,7 +68,8 @@ class TrainConfig:
     val_batch_size: int = 64
     lr: float = 1e-3
     weight_decay: float = 0.0
-    optimizer: OptimizerType = "adam"  # "adam" | "adamw" | "sgd"
+    optimizer: OptimizerType = "adam"  # "adam" | "adamw" | "sgd" | "asam"
+    asam_rho: float = 0.5              # ASAM neighbourhood radius (used when optimizer="asam")
     scheduler: Optional[SchedulerCfg] = field(default_factory=SchedulerCfg)  
     train_ratio: float = 0.8
     val_ratio: float = 0.1
