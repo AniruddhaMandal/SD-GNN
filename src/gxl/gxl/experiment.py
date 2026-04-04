@@ -110,6 +110,12 @@ class ASAM:
 
     def zero_grad(self):
         self.optimizer.zero_grad()
+
+    def state_dict(self):
+        return self.optimizer.state_dict()
+
+    def load_state_dict(self, state_dict):
+        self.optimizer.load_state_dict(state_dict)
 from . import ExperimentConfig
 from . import SubgraphFeaturesBatch
 from dataclasses import asdict
@@ -453,7 +459,7 @@ class Experiment:
     def _build_scheduler(self):
         sch = None
         s = self.cfg.train.scheduler
-        if not s:
+        if not s or getattr(s, 'type', None) is None:
             return None
         # When using ASAM, schedule the inner (base) optimizer's lr
         sched_opt = getattr(self, '_base_optimizer', self.optimizer)
@@ -1053,7 +1059,7 @@ class Experiment:
                     sf_batch = self._build_link_targets(sf_batch)
 
             # SD-GNN needs per-node subgraphs regardless of sampler
-            if self.cfg.model_name in ('SD-GNN', 'ARCH-2', 'ARCH-2-V2', 'ARCH-3', 'ARCH-4', 'ARCH-5', 'ARCH-6', 'ARCH-7', 'ARCH-7-V2', 'ARCH-7-V3', 'ARCH-7-V4', 'ARCH-7-V5', 'ARCH-8-A', 'ARCH-8-B', 'ARCH-9', 'ARCH-10', 'ARCH-11', 'ARCH-14', 'ARCH-15', 'ARCH-16', 'ARCH-18', 'ARCH-20', 'ARCH-23'):
+            if self.cfg.model_name in ('SD-GNN', 'ARCH-2', 'ARCH-2-V2', 'ARCH-3', 'ARCH-4', 'ARCH-5', 'ARCH-6', 'ARCH-7', 'ARCH-7-V2', 'ARCH-7-V3', 'ARCH-7-V4', 'ARCH-7-V5', 'ARCH-8-A', 'ARCH-8-B', 'ARCH-9', 'ARCH-10', 'ARCH-11', 'ARCH-14', 'ARCH-15', 'ARCH-16', 'ARCH-18', 'ARCH-20', 'ARCH-23', 'ARCH-24'):
                 sf_batch = self._build_all_node_targets(sf_batch)
 
             sf_batch = self._sample_and_load_subgraphs(sf_batch)
