@@ -188,6 +188,10 @@ class Arch24GraphEncoder(nn.Module):
 
         self.atom_encoder = nn.Embedding(in_channels, hidden_dim)
         self.bond_encoder = nn.Embedding(edge_dim,    hidden_dim)
+        # Linear projections for datasets with multi-dim continuous/categorical features
+        # (e.g. Peptides-func/struct which have [N,9] node and [E,3] edge features)
+        self.node_proj = nn.Linear(in_channels, hidden_dim)
+        self.bond_proj = nn.Linear(edge_dim,    hidden_dim)
         self.dist_encoder = nn.Embedding(self.MAX_DIST + 1, hidden_dim)
         self.logp_proj    = nn.Sequential(nn.Linear(1, hidden_dim), nn.ReLU())
 
@@ -214,17 +218,27 @@ class Arch24GraphEncoder(nn.Module):
 
     def forward(self, sf: SubgraphFeaturesBatch) -> torch.Tensor:
         # ── embed ─────────────────────────────────────────────────────────────
-        # Defensive: encode if not already a 2D [N, H] float tensor
+        # Defensive encoding: skip if already [*, H] float (already embedded, e.g. molhiv)
         if (not sf.x.is_floating_point()
                 or sf.x.dim() < 2
                 or sf.x.shape[-1] != self.hidden_dim):
-            sf.x = self.atom_encoder(sf.x.long().view(-1))
+            if sf.x.dim() <= 1 or sf.x.shape[-1] == 1:
+                # Scalar integer per node (ZINC: [N,1] or [N]) → embedding lookup
+                sf.x = self.atom_encoder(sf.x.long().view(-1))
+            else:
+                # Multi-dim features (Peptides: [N,9], PROTEINS: [N,3]) → linear proj
+                sf.x = self.node_proj(sf.x.float())
         if sf.edge_attr is not None and (
             not sf.edge_attr.is_floating_point()
             or sf.edge_attr.dim() < 2
             or sf.edge_attr.shape[-1] != self.hidden_dim
         ):
-            sf.edge_attr = self.bond_encoder(sf.edge_attr.long().view(-1) - 1)
+            if sf.edge_attr.dim() <= 1 or sf.edge_attr.shape[-1] == 1:
+                # Scalar integer per edge (ZINC: [E]) → embedding lookup (1-indexed)
+                sf.edge_attr = self.bond_encoder(sf.edge_attr.long().view(-1) - 1)
+            else:
+                # Multi-dim edge features (Peptides: [E,3]) → linear proj
+                sf.edge_attr = self.bond_proj(sf.edge_attr.float())
 
         x_flat, ea_flat, intra_ei, sub_batch, node_ids, valid, N_total = \
             _flatten_subgraphs(sf)

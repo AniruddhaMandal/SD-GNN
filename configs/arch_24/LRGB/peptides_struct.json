@@ -1,0 +1,48 @@
+{
+  "dataset_name": "Peptides-struct",
+  "model_name": "ARCH-24",
+  "task": "Multi-Target-Regression",
+
+  "model_config": {
+    "mpnn_type": "gine",
+    "node_feature_dim": 9,
+    "edge_feature_dim": 3,
+    "hidden_dim": 64,
+    "mpnn_layers": 4,
+    "dropout": 0.0,
+    "out_dim": 11,
+    "pooling": "sum",
+    "subgraph_sampling": true,
+    "subgraph_param": { "k": 8, "m": 32, "m_eval": 32, "pooling": "mean" },
+    "kwargs": {
+      "mlp_layers": 2,
+      "num_heads": 4,
+      "use_ht_pool": false,
+      "use_ht_inter": false
+    }
+  },
+
+  "train": {
+    "epochs": 300,
+    "train_batch_size": 128,
+    "val_batch_size": 128,
+    "lr": 1e-3,
+    "weight_decay": 1e-5,
+    "optimizer": "adam",
+    "scheduler": {
+      "type": "reduce_on_plateau",
+      "patience": 30,
+      "factor": 0.5
+    },
+    "loss_fn": "L1Loss",
+    "metric": "MAE",
+    "grad_clip": 1.0
+  },
+
+  "device": "cuda",
+  "seed": 42,
+  "num_workers": 4,
+  "save_every": 10,
+  "keep_last_k": 3,
+  "sampler": "graphlet"
+}
