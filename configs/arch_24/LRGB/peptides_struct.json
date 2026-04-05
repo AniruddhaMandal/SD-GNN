@@ -24,8 +24,8 @@
 
   "train": {
     "epochs": 300,
-    "train_batch_size": 128,
-    "val_batch_size": 128,
+    "train_batch_size": 32,
+    "val_batch_size": 32,
     "lr": 1e-3,
     "weight_decay": 1e-5,
     "optimizer": "adam",

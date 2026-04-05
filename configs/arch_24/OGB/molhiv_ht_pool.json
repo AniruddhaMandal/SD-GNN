@@ -1,0 +1,46 @@
+{
+  "dataset_name": "molhiv",
+  "model_name": "ARCH-24",
+  "task": "Binary-Classification",
+
+  "model_config": {
+    "mpnn_type": "gine",
+    "node_feature_dim": 92,
+    "edge_feature_dim": 92,
+    "hidden_dim": 92,
+    "mpnn_layers": 3,
+    "dropout": 0.1,
+    "out_dim": 1,
+    "pooling": "mean",
+    "subgraph_sampling": true,
+    "subgraph_param": { "k": 6, "m": 32, "m_eval": 64, "pooling": "mean" },
+    "kwargs": {
+      "mlp_layers": 2,
+      "num_heads": 4,
+      "use_ht_pool": true,
+      "use_ht_inter": false,
+      "val_ema_alpha": 0.85
+    }
+  },
+
+  "train": {
+    "epochs": 300,
+    "train_batch_size": 32,
+    "val_batch_size": 32,
+    "lr": 1e-3,
+    "weight_decay": 1e-5,
+    "optimizer": "asam",
+    "asam_rho": 0.5,
+    "scheduler": null,
+    "loss_fn": "BCEWithLogitsLoss",
+    "metric": "ROCAUC",
+    "grad_clip": 1.0
+  },
+
+  "device": "cuda",
+  "seed": 42,
+  "num_workers": 4,
+  "save_every": 10,
+  "keep_last_k": 3,
+  "sampler": "graphlet"
+}
