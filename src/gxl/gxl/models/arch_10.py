@@ -112,6 +112,7 @@ class Arch10GraphEncoder(nn.Module):
         self.use_attn      = use_attn
         self.use_mean_pool = use_mean_pool
 
+        self.hidden_dim    = hidden_dim
         self.atom_encoder = nn.Embedding(in_channels, hidden_dim)
         self.bond_encoder = nn.Embedding(edge_dim,    hidden_dim)
         self.dist_encoder = nn.Embedding(self.MAX_DIST + 1, hidden_dim)
@@ -134,10 +135,16 @@ class Arch10GraphEncoder(nn.Module):
         self.readout_norm = BatchNorm(hidden_dim)
 
     def forward(self, sf: SubgraphFeaturesBatch) -> torch.Tensor:
-        if not sf.x.is_floating_point():
-            sf.x = self.atom_encoder(sf.x.long().squeeze(-1))
-        if sf.edge_attr is not None and not sf.edge_attr.is_floating_point():
-            sf.edge_attr = self.bond_encoder(sf.edge_attr.long().squeeze(-1) - 1)
+        if (not sf.x.is_floating_point()
+                or sf.x.dim() < 2
+                or sf.x.shape[-1] != self.hidden_dim):
+            sf.x = self.atom_encoder(sf.x.long().view(-1))
+        if sf.edge_attr is not None and (
+            not sf.edge_attr.is_floating_point()
+            or sf.edge_attr.dim() < 2
+            or sf.edge_attr.shape[-1] != self.hidden_dim
+        ):
+            sf.edge_attr = self.bond_encoder(sf.edge_attr.long().view(-1) - 1)
 
         x_flat, ea_flat, intra_ei, sub_batch, node_ids, valid, N_total = \
             _flatten_subgraphs(sf)
@@ -229,6 +236,7 @@ class Arch10NodeEncoder(nn.Module):
         self.use_pe      = use_pe
         self.use_logp_pe = use_logp_pe
 
+        self.hidden_dim    = hidden_dim
         self.atom_encoder = nn.Embedding(in_channels, hidden_dim)
         self.bond_encoder = nn.Embedding(edge_dim,    hidden_dim)
         self.dist_encoder = nn.Embedding(self.MAX_DIST + 1, hidden_dim)
@@ -250,10 +258,16 @@ class Arch10NodeEncoder(nn.Module):
         self.readout_norm = BatchNorm(hidden_dim)
 
     def forward(self, sf: SubgraphFeaturesBatch) -> torch.Tensor:
-        if not sf.x.is_floating_point():
-            sf.x = self.atom_encoder(sf.x.long().squeeze(-1))
-        if sf.edge_attr is not None and not sf.edge_attr.is_floating_point():
-            sf.edge_attr = self.bond_encoder(sf.edge_attr.long().squeeze(-1) - 1)
+        if (not sf.x.is_floating_point()
+                or sf.x.dim() < 2
+                or sf.x.shape[-1] != self.hidden_dim):
+            sf.x = self.atom_encoder(sf.x.long().view(-1))
+        if sf.edge_attr is not None and (
+            not sf.edge_attr.is_floating_point()
+            or sf.edge_attr.dim() < 2
+            or sf.edge_attr.shape[-1] != self.hidden_dim
+        ):
+            sf.edge_attr = self.bond_encoder(sf.edge_attr.long().view(-1) - 1)
 
         x_flat, ea_flat, intra_ei, sub_batch, node_ids, valid, N_total = \
             _flatten_subgraphs(sf)
