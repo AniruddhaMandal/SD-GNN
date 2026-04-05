@@ -180,10 +180,14 @@ class Arch24GraphEncoder(nn.Module):
         use_inter_conv: bool  = True,
         use_ht_pool:    bool  = False,
         use_ht_inter:   bool  = False,
+        use_bfs_pe:     bool  = True,
+        use_logp_pe:    bool  = True,
     ):
         super().__init__()
         self.use_ht_pool  = use_ht_pool
         self.use_ht_inter = use_ht_inter
+        self.use_bfs_pe   = use_bfs_pe
+        self.use_logp_pe  = use_logp_pe
         self.hidden_dim   = hidden_dim
 
         self.atom_encoder = nn.Embedding(in_channels, hidden_dim)
@@ -258,8 +262,8 @@ class Arch24GraphEncoder(nn.Module):
 
         # ── positional encodings ──────────────────────────────────────────────
         dist    = _bfs_distances(intra_ei, S, k).clamp(max=self.MAX_DIST)
-        dist_pe = self.dist_encoder(dist)
-        logp_pe = self.logp_proj(lp[sub_batch].unsqueeze(-1))
+        dist_pe = self.dist_encoder(dist) if self.use_bfs_pe else torch.zeros_like(x_flat)
+        logp_pe = self.logp_proj(lp[sub_batch].unsqueeze(-1)) if self.use_logp_pe else torch.zeros_like(x_flat)
 
         valid_f = valid.float().unsqueeze(-1)
         h_flat  = (x_flat + dist_pe + logp_pe) * valid_f
@@ -327,4 +331,6 @@ def build_arch24(cfg: ExperimentConfig):
         use_inter_conv = kw.get('use_inter_conv',  True),
         use_ht_pool    = kw.get('use_ht_pool',     False),
         use_ht_inter   = kw.get('use_ht_inter',    False),
+        use_bfs_pe     = kw.get('use_bfs_pe',      True),
+        use_logp_pe    = kw.get('use_logp_pe',     True),
     )
