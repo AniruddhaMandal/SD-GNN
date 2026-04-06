@@ -76,7 +76,7 @@ pip install "torch==${TORCH_VERSION}" --index-url "$TORCH_INDEX" --quiet
 
 # ── torch-scatter (must be built from source — no pre-built wheels for torch 2.10) ──
 echo "==> Building torch-scatter from source (this takes ~10 minutes) ..."
-MAX_JOBS="${MAX_JOBS:-$(nproc)}" pip install --no-binary --no-build-isolation torch-scatter -q
+MAX_JOBS="${MAX_JOBS:-$(nproc)}" pip install --no-build-isolation torch-scatter -q
 
 # ── Python dependencies ────────────────────────────────────────────────────────
 echo "==> Installing Python dependencies from requirements.txt ..."
