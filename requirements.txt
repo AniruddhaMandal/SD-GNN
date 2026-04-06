@@ -15,3 +15,6 @@ tqdm>=4.62
 pyyaml>=6.0
 psutil>=6.0
 gitpython>=3.1
+
+# -- Data Processing ------------------
+rdkit
