@@ -13,7 +13,7 @@
     "out_dim": 10,
     "pooling": "sum",
     "subgraph_sampling": true,
-    "subgraph_param": { "k": 6, "m": 16, "m_eval": 16, "pooling": "mean" },
+    "subgraph_param": { "k": 10, "m": 32, "m_eval": 32, "pooling": "mean" },
     "kwargs": {
       "mlp_layers": 2,
       "num_heads": 4,
@@ -26,7 +26,7 @@
   },
 
   "train": {
-    "epochs": 100,
+    "epochs": 300,
     "train_batch_size": 32,
     "val_batch_size": 32,
     "train_ratio": 0.8,
