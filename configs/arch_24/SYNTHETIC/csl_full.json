@@ -1,0 +1,53 @@
+{
+  "dataset_name": "CSL",
+  "model_name": "ARCH-24",
+  "task": "Multi-Class-Classification",
+
+  "model_config": {
+    "mpnn_type": "gine",
+    "node_feature_dim": 64,
+    "edge_feature_dim": 1,
+    "hidden_dim": 64,
+    "mpnn_layers": 4,
+    "dropout": 0.0,
+    "out_dim": 10,
+    "pooling": "sum",
+    "subgraph_sampling": true,
+    "subgraph_param": { "k": 6, "m": 16, "m_eval": 16, "pooling": "mean" },
+    "kwargs": {
+      "mlp_layers": 2,
+      "num_heads": 4,
+      "use_ht_pool": true,
+      "use_ht_inter": true,
+      "use_bfs_pe": true,
+      "use_logp_pe": true,
+      "node_feature_type": "all_one"
+    }
+  },
+
+  "train": {
+    "epochs": 100,
+    "train_batch_size": 32,
+    "val_batch_size": 32,
+    "train_ratio": 0.8,
+    "val_ratio": 0.1,
+    "lr": 1e-3,
+    "weight_decay": 1e-5,
+    "optimizer": "adam",
+    "scheduler": {
+      "type": "reduce_on_plateau",
+      "patience": 30,
+      "factor": 0.5
+    },
+    "loss_fn": "CrossEntropyLoss",
+    "metric": "ACC",
+    "grad_clip": 1.0
+  },
+
+  "device": "cuda",
+  "seed": 42,
+  "num_workers": 0,
+  "save_every": 50,
+  "keep_last_k": 2,
+  "sampler": "graphlet"
+}

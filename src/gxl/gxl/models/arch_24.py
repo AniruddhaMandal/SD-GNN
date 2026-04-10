@@ -115,6 +115,8 @@ class Arch24Layer(nn.Module):
         is_root_f = is_root.float().unsqueeze(-1)
 
         # ── intra-subgraph GINE ───────────────────────────────────────────────
+        if ea_flat is None:
+            ea_flat = torch.zeros(intra_ei.shape[1], h_flat.shape[-1], device=h_flat.device)
         h1 = self.intra_conv(h_flat, intra_ei, ea_flat)
         h1 = self.intra_bn(h1) * valid_f
 
@@ -141,6 +143,8 @@ class Arch24Layer(nn.Module):
                     dim=0, reduce='mean', dim_size=N_total,
                 )
 
+            if edge_attr is None:
+                edge_attr = torch.zeros(edge_index.shape[1], h_flat.shape[-1], device=h_flat.device)
             h_inter       = self.inter_conv(h_root_canonical, edge_index, edge_attr)
             h_inter       = self.inter_bn(h_inter)
             h_inter_bcast = h_inter[clamped_ids] * valid_f
