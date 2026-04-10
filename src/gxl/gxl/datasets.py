@@ -42,6 +42,138 @@ def _make_csl_graphs(n: int = 41, skip_values=None, graphs_per_class: int = 15, 
     return data_list
 
 
+def _make_sr_graphs(n_per_class: int = 20, seed: int = 0):
+    """
+    SR dataset: Shrikhande graph vs 4×4 Rook's graph.
+    Both are strongly regular SR(16, 6, 2, 2): same (n,k,λ,μ) parameters,
+    non-isomorphic, indistinguishable by ≤2-WL. Binary classification:
+    class 0 = Shrikhande, class 1 = Rook's graph.
+    """
+    import torch
+    from torch_geometric.data import Data
+
+    rng = torch.Generator()
+    rng.manual_seed(seed)
+    n = 16
+
+    def idx(a, b):
+        return a * 4 + b
+
+    # Shrikhande graph: nodes (a,b) in Z4×Z4
+    # Neighbors: (a±1,b), (a,b±1), (a+1,b+1), (a-1,b-1) all mod 4
+    shrikhande_edges = set()
+    for a in range(4):
+        for b in range(4):
+            u = idx(a, b)
+            for da, db in [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (-1, -1)]:
+                v = idx((a + da) % 4, (b + db) % 4)
+                if u != v:
+                    shrikhande_edges.add((min(u, v), max(u, v)))
+
+    # 4×4 Rook's graph: (a,b) connects to all same-row and same-column nodes
+    rooks_edges = set()
+    for a in range(4):
+        for b in range(4):
+            u = idx(a, b)
+            for b2 in range(4):
+                if b2 != b:
+                    v = idx(a, b2)
+                    rooks_edges.add((min(u, v), max(u, v)))
+            for a2 in range(4):
+                if a2 != a:
+                    v = idx(a2, b)
+                    rooks_edges.add((min(u, v), max(u, v)))
+
+    data_list = []
+    for label, edges in [(0, shrikhande_edges), (1, rooks_edges)]:
+        edges = list(edges)
+        src_b = torch.tensor([u for u, v in edges], dtype=torch.long)
+        dst_b = torch.tensor([v for u, v in edges], dtype=torch.long)
+        for _ in range(n_per_class):
+            perm = torch.randperm(n, generator=rng)
+            src = perm[src_b]
+            dst = perm[dst_b]
+            ei = torch.stack([torch.cat([src, dst]), torch.cat([dst, src])], dim=0)
+            data_list.append(Data(edge_index=ei, y=torch.tensor([label], dtype=torch.long),
+                                  num_nodes=n))
+    return data_list
+
+
+def _make_exp_graphs(n_per_class: int = 60, seed: int = 0):
+    """
+    EXP-like dataset: pairs of 1-WL-equivalent but non-isomorphic graphs.
+
+    For any k-regular graph with all-ones node features, 1-WL assigns the same
+    colour to every node at every round (all nodes have degree k; all neighbours
+    have the same colour), so any two k-regular n-node graphs are WL-equivalent.
+    A model more expressive than 1-WL can still distinguish them by counting
+    substructures such as triangles and cycles.
+
+    Three families (each pair shares n and k):
+      Family 1 – n=6,  k=3: K_{3,3} (bipartite, no triangles)
+                             vs Triangular Prism (has triangles)
+      Family 2 – n=8,  k=3: Cubical / Q3 graph (bipartite, girth 4)
+                             vs Wagner graph (non-bipartite, girth 3)
+      Family 3 – n=10, k=3: Petersen graph (girth 5)
+                             vs Pentagonal Prism (girth 4)
+
+    Label 0 = first graph in pair, label 1 = second graph.
+    """
+    import torch
+    from torch_geometric.data import Data
+
+    rng = torch.Generator()
+    rng.manual_seed(seed)
+
+    def _relabel_copies(edges, n, label, count):
+        edges = list(edges)
+        src_b = torch.tensor([u for u, v in edges], dtype=torch.long)
+        dst_b = torch.tensor([v for u, v in edges], dtype=torch.long)
+        out = []
+        for _ in range(count):
+            perm = torch.randperm(n, generator=rng)
+            src = perm[src_b];  dst = perm[dst_b]
+            ei = torch.stack([torch.cat([src, dst]), torch.cat([dst, src])], dim=0)
+            out.append(Data(edge_index=ei, y=torch.tensor([label], dtype=torch.long),
+                            num_nodes=n))
+        return out
+
+    families = []
+
+    # ── Family 1: K_{3,3} vs Triangular Prism (n=6, k=3) ────────────────────
+    k33 = {(0,3),(0,4),(0,5),(1,3),(1,4),(1,5),(2,3),(2,4),(2,5)}
+    prism3 = {(0,1),(1,2),(0,2),(3,4),(4,5),(3,5),(0,3),(1,4),(2,5)}
+    families.append((6, k33, prism3))
+
+    # ── Family 2: Cube (Q3) vs Wagner graph (n=8, k=3) ───────────────────────
+    # Cube: nodes 0-7, adjacent if binary representations differ by exactly 1 bit
+    cube = {(i, j) for i in range(8) for j in range(i+1, 8)
+            if bin(i ^ j).count('1') == 1}
+    # Wagner: 8-cycle 0-1-2-3-4-5-6-7-0 plus diagonals 0-4, 1-5, 2-6, 3-7
+    wagner = {(0,1),(1,2),(2,3),(3,4),(4,5),(5,6),(6,7),(0,7),
+              (0,4),(1,5),(2,6),(3,7)}
+    families.append((8, cube, wagner))
+
+    # ── Family 3: Petersen vs Pentagonal Prism (n=10, k=3) ───────────────────
+    petersen = {
+        (0,1),(1,2),(2,3),(3,4),(0,4),   # outer 5-cycle
+        (5,7),(7,9),(9,6),(6,8),(8,5),   # inner pentagram
+        (0,5),(1,6),(2,7),(3,8),(4,9),   # spokes
+    }
+    pent_prism = {
+        (0,1),(1,2),(2,3),(3,4),(0,4),   # outer pentagon
+        (5,6),(6,7),(7,8),(8,9),(5,9),   # inner pentagon
+        (0,5),(1,6),(2,7),(3,8),(4,9),   # rungs
+    }
+    families.append((10, petersen, pent_prism))
+
+    data_list = []
+    for n, edges0, edges1 in families:
+        data_list.extend(_relabel_copies(edges0, n, 0, n_per_class))
+        data_list.extend(_relabel_copies(edges1, n, 1, n_per_class))
+    return data_list
+
+
 class _ListDataset:
     """Minimal dataset wrapper around a list of PyG Data objects."""
     def __init__(self, data_list, transform=None):
@@ -89,6 +221,51 @@ def build_csl(cfg: ExperimentConfig):
         raise ValueError(f"Unsupported node_feature_type for CSL: {f_type}")
 
     graphs  = _make_csl_graphs()           # fixed seed → reproducible dataset
+    dataset = _ListDataset(graphs, transform=transform)
+    return build_dataloaders_from_dataset(dataset, cfg)
+
+
+@register_dataset('SR')
+def build_sr(cfg: ExperimentConfig):
+    """
+    SR dataset: Shrikhande graph vs 4×4 Rook's graph.
+    Both are strongly regular SR(16, 6, 2, 2) — same parameters, non-isomorphic,
+    indistinguishable by ≤2-WL. Binary classification (0=Shrikhande, 1=Rook's).
+    40 graphs total: 20 random relabellings of each.
+    """
+    from torch_geometric.transforms import Compose
+    from .utils.data_transform import SetNodeFeaturesOnes
+
+    node_dim  = cfg.model_config.node_feature_dim
+    transform = Compose([SetNodeFeaturesOnes(dim=node_dim, cat=False)])
+
+    graphs  = _make_sr_graphs(n_per_class=20, seed=0)
+    dataset = _ListDataset(graphs, transform=transform)
+    return build_dataloaders_from_dataset(dataset, cfg)
+
+
+@register_dataset('EXP')
+def build_exp(cfg: ExperimentConfig):
+    """
+    EXP-like dataset: three families of 1-WL-equivalent but non-isomorphic
+    regular graph pairs.  All-ones node features → 1-WL assigns the same colour
+    to every node in any k-regular graph, so any model distinguishing pairs is
+    strictly more expressive than 1-WL.
+
+    Families:
+      - K_{3,3} vs Triangular Prism  (n=6,  k=3)
+      - Cube (Q3) vs Wagner graph     (n=8,  k=3)
+      - Petersen vs Pentagonal Prism  (n=10, k=3)
+
+    360 graphs total: 60 relabellings × 2 graphs × 3 families.
+    """
+    from torch_geometric.transforms import Compose
+    from .utils.data_transform import SetNodeFeaturesOnes
+
+    node_dim  = cfg.model_config.node_feature_dim
+    transform = Compose([SetNodeFeaturesOnes(dim=node_dim, cat=False)])
+
+    graphs  = _make_exp_graphs(n_per_class=60, seed=0)
     dataset = _ListDataset(graphs, transform=transform)
     return build_dataloaders_from_dataset(dataset, cfg)
 

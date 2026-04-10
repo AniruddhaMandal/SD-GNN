@@ -1,0 +1,44 @@
+{
+  "dataset_name": "SR",
+  "model_name": "VANILLA",
+  "task": "Binary-Classification",
+
+  "model_config": {
+    "mpnn_type": "gin",
+    "node_feature_dim": 1,
+    "edge_feature_dim": 1,
+    "hidden_dim": 64,
+    "mpnn_layers": 4,
+    "dropout": 0.0,
+    "out_dim": 2,
+    "pooling": "sum",
+    "subgraph_sampling": false,
+    "kwargs": {
+      "node_feature_type": "all_one",
+      "residual": false
+    }
+  },
+
+  "train": {
+    "epochs": 300,
+    "train_batch_size": 32,
+    "val_batch_size": 32,
+    "train_ratio": 0.7,
+    "val_ratio": 0.15,
+    "lr": 1e-3,
+    "weight_decay": 0.0,
+    "optimizer": "adam",
+    "scheduler": {
+      "type": "reduce_on_plateau",
+      "patience": 30,
+      "factor": 0.5
+    },
+    "loss_fn": "CrossEntropyLoss",
+    "metric": "ACC"
+  },
+
+  "device": "cuda",
+  "seed": 42,
+  "num_workers": 0,
+  "sampler": "graphlet"
+}
