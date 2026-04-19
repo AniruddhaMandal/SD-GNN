@@ -25,3 +25,24 @@ def build_l1loss():
 def build_mseloss():
     from torch.nn import MSELoss
     return MSELoss()
+
+
+@register_loss("BCEWithLogitsLoss-NaN")
+def build_bcelogit_nan():
+    """
+    BCE-with-logits loss that ignores NaN labels.
+    Used for multi-task datasets like Tox21 where some assay labels are missing.
+    Computes mean over valid (non-NaN) entries only.
+    """
+    import torch
+    import torch.nn.functional as F
+
+    def nan_masked_bce(output: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        mask = ~torch.isnan(target)
+        if not mask.any():
+            return output.sum() * 0.0  # zero loss, differentiable
+        return F.binary_cross_entropy_with_logits(
+            output[mask], target[mask].float()
+        )
+
+    return nan_masked_bce

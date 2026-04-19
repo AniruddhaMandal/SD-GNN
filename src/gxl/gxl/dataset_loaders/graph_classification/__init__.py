@@ -7,5 +7,6 @@ from . import tu          # registers 'MUTAG', 'ENZYMES', 'PROTEINS', 'COLLAB', 
                           #            'REDDIT-BINARY', 'PTC_MR', 'AIDS'
 from . import zinc_qm9    # registers 'ZINC', 'QM9'
 from . import subgnn      # registers 'PPI-BP', 'HPO-METAB', 'HPO-NEURO', 'EM-USER'
-from . import molhiv      # registers 'ogbg-molhiv', 'molhiv'
-from . import molecules   # registers 'ogbg-ppa', 'BBBP', 'Tox21'
+from . import molhiv           # registers 'ogbg-molhiv', 'molhiv'
+from . import molecules        # registers 'ogbg-ppa', 'BBBP', 'Tox21'
+from . import ogb_mol_scaffold # registers 'ogbg-molbbbp', 'molbbbp', 'ogbg-molbace', 'molbace', 'ogbg-moltox21', 'moltox21'
