@@ -108,16 +108,20 @@ class OGBBondEncoder:
             emb.weight.requires_grad = requires_grad
 
     def __call__(self, data):
-        if data.edge_attr is not None and data.edge_attr.numel() > 0:
+        if data.edge_attr is not None:
             edge_attr = data.edge_attr  # [num_edges, 3]
             if edge_attr.dim() == 1:
                 edge_attr = edge_attr.unsqueeze(-1)
 
-            embedded = sum(
-                self.embeddings[i](edge_attr[:, i].clamp(0, self.BOND_FEATURE_DIMS[i] - 1))
-                for i in range(min(edge_attr.size(1), len(self.embeddings)))
-            )
-            data.edge_attr = embedded  # [num_edges, emb_dim]
+            if edge_attr.numel() == 0:
+                # No bonds — return correctly shaped empty tensor so collation works
+                data.edge_attr = edge_attr.new_zeros((0, self.emb_dim), dtype=torch.float)
+            else:
+                embedded = sum(
+                    self.embeddings[i](edge_attr[:, i].clamp(0, self.BOND_FEATURE_DIMS[i] - 1))
+                    for i in range(min(edge_attr.size(1), len(self.embeddings)))
+                )
+                data.edge_attr = embedded  # [num_edges, emb_dim]
         return data
 
 
