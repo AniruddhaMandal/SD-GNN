@@ -108,6 +108,14 @@ class OGBMolScaffoldDataset(InMemoryDataset):
             return gzip.open(path, 'rt', encoding='utf-8')
         return open(path, 'r', encoding='utf-8')
 
+    @staticmethod
+    def _clean(val: str) -> str:
+        """Strip whitespace and outer single quotes (tox21 CSV quirk)."""
+        val = val.strip()
+        if len(val) >= 2 and val[0] == "'" and val[-1] == "'":
+            val = val[1:-1].strip()
+        return val
+
     def process(self):
         csv_path = self.raw_paths[0]
         print(f"Processing SMILES from {csv_path}...")
@@ -118,15 +126,15 @@ class OGBMolScaffoldDataset(InMemoryDataset):
         with self._open_csv(csv_path) as f:
             reader = csv.DictReader(f)
             for row in reader:
-                smiles_list.append(row[self._smiles_col])
+                smiles_list.append(self._clean(row[self._smiles_col]))
                 if self._multi_label:
                     row_labels = []
                     for col in self._label_cols:
-                        val = row[col].strip()
+                        val = self._clean(row[col])
                         row_labels.append(float('nan') if val == '' else float(val))
                     raw_labels.append(row_labels)
                 else:
-                    val = row[self._label_cols[0]].strip()
+                    val = self._clean(row[self._label_cols[0]])
                     raw_labels.append(int(float(val)))
 
         print(f"Found {len(smiles_list)} molecules.")
