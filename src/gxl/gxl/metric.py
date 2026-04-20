@@ -53,17 +53,22 @@ def build_rocauc_multilabel():
     from sklearn.metrics import roc_auc_score
     def rocauc_multilabel(y_true, y_pred):
         """
-        Per-task mean ROCAUC for multi-label node classification (e.g. ogbn-proteins).
-        Tasks where y_true has only one class are skipped.
+        Per-task mean ROCAUC for multi-label classification (e.g. ogbg-moltox21).
+        NaN labels are masked per task. Tasks with only one class are skipped.
         """
-        y_true = np.asarray(y_true)
-        y_pred = np.asarray(y_pred)
+        y_true = np.asarray(y_true, dtype=float)
+        y_pred = np.asarray(y_pred, dtype=float)
         if y_true.ndim == 1:
-            return roc_auc_score(y_true, y_pred)
+            mask = ~np.isnan(y_true)
+            return roc_auc_score(y_true[mask], y_pred[mask])
         scores = []
         for i in range(y_true.shape[1]):
             col_true = y_true[:, i]
             col_pred = y_pred[:, i]
+            mask = ~np.isnan(col_true)
+            if mask.sum() == 0:
+                continue
+            col_true, col_pred = col_true[mask], col_pred[mask]
             if len(np.unique(col_true)) < 2:
                 continue
             scores.append(roc_auc_score(col_true, col_pred))
